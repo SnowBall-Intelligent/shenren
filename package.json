@@ -1,0 +1,15 @@
+{
+  "name": "shenren",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n web,api -c cyan,magenta \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "watchexec -e rs,toml -r --cwd backend cargo run",
+    "dev:backend:once": "cargo run --manifest-path backend/Cargo.toml",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:backend": "cargo build --manifest-path backend/Cargo.toml --release"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

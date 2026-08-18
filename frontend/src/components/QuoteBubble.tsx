@@ -1,0 +1,69 @@
+import { Avatar, Box, Typography } from '@mui/material'
+import type { Quote } from '../api/types'
+import { nameInitial, uploadUrl } from '../api/client'
+import { AVATAR_COL, BUBBLE_BG } from '../theme'
+
+interface QuoteBubbleProps {
+  quote: Quote
+  showIdentity: boolean
+  tightGap: boolean
+}
+
+export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubbleProps) {
+  const name = quote.person?.name ?? quote.proposed_person_name ?? '未知神人'
+  const avatar = uploadUrl(quote.person?.avatar_url)
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        gap: 1.25,
+        alignItems: 'flex-start',
+        mt: tightGap ? 0.5 : 2,
+      }}
+    >
+      <Box sx={{ width: AVATAR_COL, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+        {showIdentity ? (
+          <Avatar
+            src={avatar}
+            alt={name}
+            sx={{ width: 36, height: 36, bgcolor: '#3a3a3a', fontSize: 14 }}
+          >
+            {nameInitial(name)}
+          </Avatar>
+        ) : null}
+      </Box>
+
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        {showIdentity ? (
+          <Typography
+            variant="caption"
+            sx={{ color: 'text.secondary', display: 'block', mb: 0.5, pl: 0.25 }}
+          >
+            {name}
+          </Typography>
+        ) : null}
+        <Box
+          sx={{
+            display: 'inline-block',
+            maxWidth: '100%',
+            bgcolor: BUBBLE_BG,
+            borderRadius: '12px',
+            px: 1.5,
+            py: 1,
+            wordBreak: 'break-word',
+          }}
+        >
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>
+            {quote.content}
+          </Typography>
+          {quote.source ? (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+              来源：{quote.source}
+            </Typography>
+          ) : null}
+        </Box>
+      </Box>
+    </Box>
+  )
+}

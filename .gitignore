@@ -1,0 +1,23 @@
+# Rust
+backend/target/
+backend/data/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# Env / OS
+.env
+.env.local
+*.db
+*.db-*
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
