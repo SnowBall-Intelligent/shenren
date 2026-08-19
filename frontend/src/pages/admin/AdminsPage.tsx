@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
-  Alert,
   Box,
   Button,
   CircularProgress,
@@ -18,26 +17,26 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import { adminApi, normalizeAdmins } from '../../api'
 import type { Admin, AdminMe } from '../../api/types'
 import { ApiError } from '../../api/client'
+import { useToast } from '../../components/AppToast'
 
 export default function AdminsPage() {
   const { me } = useOutletContext<{ me: AdminMe }>()
+  const toast = useToast()
   const [admins, setAdmins] = useState<Admin[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError(null)
     try {
       const data = await adminApi.listAdmins()
       setAdmins(normalizeAdmins(data))
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '加载失败')
+      toast.fromError(e)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     void load()
@@ -45,7 +44,7 @@ export default function AdminsPage() {
 
   const handleDelete = async (admin: Admin) => {
     if (admin.id === me.id && admins.length <= 1) {
-      setError('不能删除唯一的管理员')
+      toast.error('不能删除唯一的管理员')
       return
     }
     if (!window.confirm(`确定删除管理员「${admin.username}」？`)) return
@@ -53,7 +52,7 @@ export default function AdminsPage() {
       await adminApi.deleteAdmin(admin.id)
       await load()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '删除失败')
+      toast.fromError(e)
     }
   }
 
@@ -67,12 +66,6 @@ export default function AdminsPage() {
           新增管理员
         </Button>
       </Stack>
-
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      ) : null}
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -127,7 +120,7 @@ export default function AdminsPage() {
           setOpen(false)
           await load()
         }}
-        onError={(msg) => setError(msg)}
+        onError={(msg) => toast.error(msg)}
       />
     </Box>
   )

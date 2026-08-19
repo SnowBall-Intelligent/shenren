@@ -12,13 +12,14 @@ import {
 import { adminApi } from '../../api'
 import type { SiteInfo } from '../../api/types'
 import { ApiError } from '../../api/client'
+import { useToast } from '../../components/AppToast'
 
 export default function SettingsPage() {
+  const toast = useToast()
   const [form, setForm] = useState<SiteInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
     adminApi
@@ -32,8 +33,6 @@ export default function SettingsPage() {
     e.preventDefault()
     if (!form) return
     setSaving(true)
-    setError(null)
-    setSuccess(false)
     try {
       const updated = await adminApi.updateSettings({
         site_name: form.site_name,
@@ -43,9 +42,9 @@ export default function SettingsPage() {
         allow_propose_person: form.allow_propose_person,
       })
       setForm(updated)
-      setSuccess(true)
+      toast.fromSuccess(updated)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '保存失败')
+      toast.fromError(err)
     } finally {
       setSaving(false)
     }
@@ -65,17 +64,6 @@ export default function SettingsPage() {
 
   return (
     <Box component="form" onSubmit={(e) => void save(e)} sx={{ maxWidth: 560 }}>
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      ) : null}
-      {success ? (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(false)}>
-          已保存
-        </Alert>
-      ) : null}
-
       <Stack spacing={2.5}>
         <TextField
           label="站点名称"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link as RouterLink, Outlet } from 'react-router-dom'
+import { Link as RouterLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   AppBar,
   Box,
@@ -13,10 +13,14 @@ import {
 import { publicApi } from '../api'
 import type { SiteInfo } from '../api/types'
 import { uploadUrl } from '../api/client'
+import SubmitDialog from '../components/SubmitDialog'
 
 export default function PublicLayout() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [site, setSite] = useState<SiteInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [submitOpen, setSubmitOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -50,6 +54,16 @@ export default function PublicLayout() {
     }
   }, [site?.site_name])
 
+  useEffect(() => {
+    const state = location.state as { submit?: boolean } | null
+    if (location.pathname === '/submit' || state?.submit) {
+      setSubmitOpen(true)
+      if (location.pathname !== '/' || state?.submit) {
+        navigate('/', { replace: true })
+      }
+    }
+  }, [location.pathname, location.state, navigate])
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
@@ -76,7 +90,7 @@ export default function PublicLayout() {
               {site?.site_name ?? '神人网'}
             </Typography>
           </Box>
-          <Button component={RouterLink} to="/submit" color="inherit" size="small">
+          <Button color="inherit" size="small" onClick={() => setSubmitOpen(true)}>
             投稿
           </Button>
         </Toolbar>
@@ -90,6 +104,8 @@ export default function PublicLayout() {
         ) : null}
         <Outlet context={{ site }} />
       </Container>
+
+      <SubmitDialog open={submitOpen} onClose={() => setSubmitOpen(false)} site={site} />
 
       <Box component="footer" sx={{ py: 2, textAlign: 'center', color: 'text.secondary', fontSize: 13 }}>
         {site?.footer ? (

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link as RouterLink, useNavigate, useLocation } from 'react-router-dom'
 import {
-  Alert,
   Box,
   Button,
   CircularProgress,
@@ -12,18 +11,18 @@ import {
   Typography,
 } from '@mui/material'
 import { adminApi } from '../../api'
-import { ApiError } from '../../api/client'
+import { useToast } from '../../components/AppToast'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/admin/quotes'
+  const toast = useToast()
+  const from = (location.state as { from?: string } | null)?.from ?? '/admin/quotes/review'
 
   const [checking, setChecking] = useState(true)
   const [needsSetup, setNeedsSetup] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -57,12 +56,12 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
-    setError(null)
     try {
-      await adminApi.login(username.trim(), password)
+      const data = await adminApi.login(username.trim(), password)
+      toast.fromSuccess(data)
       navigate(from, { replace: true })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '登录失败')
+      toast.fromError(err)
     } finally {
       setSubmitting(false)
     }
@@ -86,11 +85,6 @@ export default function LoginPage() {
         <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>
           管理员登录
         </Typography>
-        {error ? (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        ) : null}
         <Stack component="form" spacing={2} onSubmit={(e) => void handleSubmit(e)}>
           <TextField
             label="用户名"

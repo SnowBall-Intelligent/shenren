@@ -19,6 +19,8 @@ pub struct SiteResponse {
     pub logo_url: Option<String>,
     pub footer: Option<String>,
     pub allow_propose_person: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -50,6 +52,23 @@ pub struct PaginatedQuotes {
 pub struct QuotesQuery {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+    pub person_id: Option<i64>,
+}
+
+/// Trim, length-check, and reject obvious script tags. Content is stored as raw Markdown.
+pub fn normalize_quote_content(raw: &str) -> AppResult<String> {
+    let content = raw.trim().to_string();
+    if content.is_empty() {
+        return Err(AppError::bad_request("言论内容不能为空"));
+    }
+    if content.chars().count() > 2000 {
+        return Err(AppError::bad_request("言论内容过长"));
+    }
+    let lower = content.to_ascii_lowercase();
+    if lower.contains("<script") {
+        return Err(AppError::bad_request("言论内容包含不允许的标签"));
+    }
+    Ok(content)
 }
 
 #[derive(Deserialize)]
@@ -68,6 +87,7 @@ pub async fn get_site(State(state): State<AppState>) -> AppResult<Json<SiteRespo
         logo_url: settings.logo_url,
         footer: settings.footer,
         allow_propose_person: settings.allow_propose_person,
+        message: None,
     }))
 }
 
@@ -94,9 +114,13 @@ pub async fn list_quotes(
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
 
-    let paginator = quotes::Entity::find()
+    let mut finder = quotes::Entity::find()
         .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
-        .filter(quotes::Column::PersonId.is_not_null())
+        .filter(quotes::Column::PersonId.is_not_null());
+    if let Some(pid) = query.person_id {
+        finder = finder.filter(quotes::Column::PersonId.eq(pid));
+    }
+    let paginator = finder
         .order_by_desc(quotes::Column::CreatedAt)
         .paginate(&state.db, page_size);
 
@@ -143,13 +167,7 @@ pub async fn create_submission(
         return Err(AppError::TooManyRequests);
     }
 
-    let content = body.content.trim().to_string();
-    if content.is_empty() {
-        return Err(AppError::bad_request("言论内容不能为空"));
-    }
-    if content.chars().count() > 2000 {
-        return Err(AppError::bad_request("言论内容过长"));
-    }
+    let content = normalize_quote_content(&body.content)?;
 
     let settings = ensure_site_settings(&state).await?;
     let source = body
@@ -205,7 +223,11 @@ pub async fn create_submission(
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "id": inserted.id, "status": "pending" })),
+        Json(serde_json::json!({
+            "id": inserted.id,
+            "status": "pending",
+            "message": "投稿成功，请等待审核"
+        })),
     ))
 }
 

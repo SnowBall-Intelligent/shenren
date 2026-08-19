@@ -6,6 +6,7 @@ export interface SiteInfo {
   logo_url: string | null
   footer: string | null
   allow_propose_person: boolean
+  message?: string
 }
 
 export interface Person {
@@ -32,6 +33,7 @@ export interface Quote {
   reviewed_at?: string | null
   reviewed_by?: number | null
   person: QuotePerson | null
+  message?: string
 }
 
 export interface Paginated<T> {
@@ -62,6 +64,7 @@ export interface Admin {
 export interface AdminMe {
   id: number
   username: string
+  message?: string
 }
 
 export interface SiteSettingsUpdate {

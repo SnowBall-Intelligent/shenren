@@ -5,7 +5,6 @@ import {
   Avatar,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -16,55 +15,59 @@ import {
   MenuItem,
   Select,
   Stack,
-  Tab,
-  Tabs,
+  TablePagination,
   TextField,
   Typography,
+  IconButton,
 } from '@mui/material'
-import { adminApi, normalizePersons } from '../../api'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+import { adminApi, normalizePersons, publicApi } from '../../api'
 import type { Person, Quote } from '../../api/types'
 import { ApiError, nameInitial, uploadUrl } from '../../api/client'
+import QuoteMarkdown from '../../components/QuoteMarkdown'
 import QuoteCreateDialog from './QuoteCreateDialog'
+import { useToast } from '../../components/AppToast'
 
-type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
-
-export default function QuotesPage() {
-  const [status, setStatus] = useState<StatusFilter>('pending')
+export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) {
+  const toast = useToast()
+  const isReview = variant === 'review'
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [persons, setPersons] = useState<Person[]>([])
   const [approveTarget, setApproveTarget] = useState<Quote | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [editQuote, setEditQuote] = useState<Quote | null>(null)
 
-  const load = useCallback(async (p = 1) => {
+  const load = useCallback(async (p = 1, size = pageSize) => {
     setLoading(true)
-    setError(null)
     try {
       const data = await adminApi.listQuotes({
-        status: status === 'all' ? undefined : status,
+        status: isReview ? 'unapproved' : 'approved',
         page: p,
-        page_size: 20,
+        page_size: size,
       })
       setQuotes(data.items)
       setTotal(data.total)
       setPage(data.page)
+      setPageSize(data.page_size)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '加载失败')
+      toast.fromError(e)
     } finally {
       setLoading(false)
     }
-  }, [status])
+  }, [isReview, pageSize, toast])
 
   useEffect(() => {
     void load(1)
   }, [load])
 
   useEffect(() => {
-    adminApi
-      .listPersons()
+    publicApi
+      .getPersons()
       .then((d) => setPersons(normalizePersons(d)))
       .catch(() => setPersons([]))
   }, [])
@@ -74,7 +77,7 @@ export default function QuotesPage() {
       await adminApi.rejectQuote(id)
       await load(page)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '驳回失败')
+      toast.fromError(e)
     }
   }
 
@@ -87,36 +90,29 @@ export default function QuotesPage() {
       await adminApi.approveQuote(quote.id)
       await load(page)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '通过失败')
+      toast.fromError(e)
+    }
+  }
+
+  const handleDelete = async (quote: Quote) => {
+    if (!window.confirm('确定删除这条语录？')) return
+    try {
+      const data = await adminApi.deleteQuote(quote.id)
+      toast.fromSuccess(data)
+      await load(page)
+    } catch (e) {
+      toast.fromError(e)
     }
   }
 
   return (
     <Box>
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ mb: 2, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}
-      >
-        <Tabs
-          value={status}
-          onChange={(_, v: StatusFilter) => setStatus(v)}
-          variant="scrollable"
-        >
-          <Tab value="pending" label="待审" />
-          <Tab value="approved" label="已通过" />
-          <Tab value="rejected" label="已驳回" />
-          <Tab value="all" label="全部" />
-        </Tabs>
-        <Button variant="contained" onClick={() => setCreateOpen(true)}>
-          添加语录
-        </Button>
-      </Stack>
-
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
+      {!isReview ? (
+        <Stack direction="row" sx={{ mb: 2, justifyContent: 'flex-end' }}>
+          <Button variant="contained" onClick={() => setCreateOpen(true)}>
+            添加语录
+          </Button>
+        </Stack>
       ) : null}
 
       {loading ? (
@@ -138,22 +134,24 @@ export default function QuotesPage() {
               }}
             >
               <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                <StatusChip status={q.status} />
                 <Typography variant="body2" color="text.secondary">
                   {q.person?.name ?? q.proposed_person_name ?? '（无神人）'}
                   {q.proposed_person_name && !q.person_id ? ' · 新神人提案' : ''}
+                  {isReview ? ` · ${q.status === 'rejected' ? '已驳回' : '待审'}` : ''}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
                   {formatTime(q.created_at)}
                 </Typography>
               </Stack>
-              <Typography sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>{q.content}</Typography>
+              <Box sx={{ mb: 1 }}>
+                <QuoteMarkdown content={q.content} />
+              </Box>
               {q.source ? (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                   来源：{q.source}
                 </Typography>
               ) : null}
-              {q.status === 'pending' ? (
+              {isReview && q.status === 'pending' ? (
                 <Stack direction="row" spacing={1}>
                   <Button size="small" variant="contained" onClick={() => void handleApproveSimple(q)}>
                     通过
@@ -163,24 +161,38 @@ export default function QuotesPage() {
                   </Button>
                 </Stack>
               ) : null}
+              {!isReview ? (
+                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                  <IconButton size="small" onClick={() => setEditQuote(q)} aria-label="修改">
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton size="small" color="error" onClick={() => void handleDelete(q)} aria-label="删除">
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+              ) : null}
             </Box>
           ))}
         </Stack>
       )}
 
-      {total > 20 ? (
-        <Stack direction="row" spacing={1} sx={{ mt: 3, justifyContent: 'center' }}>
-          <Button disabled={page <= 1} onClick={() => void load(page - 1)}>
-            上一页
-          </Button>
-          <Typography variant="body2" sx={{ alignSelf: 'center' }}>
-            {page} / {Math.max(1, Math.ceil(total / 20))}
-          </Typography>
-          <Button disabled={page * 20 >= total} onClick={() => void load(page + 1)}>
-            下一页
-          </Button>
-        </Stack>
-      ) : null}
+      <TablePagination
+        component="div"
+        count={total}
+        page={Math.max(0, page - 1)}
+        onPageChange={(_, next) => void load(next + 1, pageSize)}
+        rowsPerPage={pageSize}
+        onRowsPerPageChange={(e) => {
+          const size = parseInt(e.target.value, 10)
+          setPageSize(size)
+          void load(1, size)
+        }}
+        rowsPerPageOptions={[10, 20, 50]}
+        labelRowsPerPage="每页"
+        labelDisplayedRows={({ from, to, count }) =>
+          `${from}–${to} / ${count === -1 ? `超过 ${to}` : count}`
+        }
+      />
 
       <ApproveDialog
         quote={approveTarget}
@@ -197,25 +209,21 @@ export default function QuotesPage() {
         onClose={() => setCreateOpen(false)}
         onCreated={async () => {
           setCreateOpen(false)
-          if (status !== 'approved') {
-            setStatus('approved')
-          } else {
-            await load(1)
-          }
+          await load(1)
+        }}
+      />
+      <QuoteCreateDialog
+        open={editQuote !== null}
+        quote={editQuote}
+        persons={persons}
+        onClose={() => setEditQuote(null)}
+        onCreated={async () => {
+          setEditQuote(null)
+          await load(page)
         }}
       />
     </Box>
   )
-}
-
-function StatusChip({ status }: { status: Quote['status'] }) {
-  const map = {
-    pending: { label: '待审', color: 'warning' as const },
-    approved: { label: '已通过', color: 'success' as const },
-    rejected: { label: '已驳回', color: 'default' as const },
-  }
-  const m = map[status ?? 'pending']
-  return <Chip size="small" label={m.label} color={m.color} />
 }
 
 function formatTime(iso: string) {

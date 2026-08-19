@@ -11,16 +11,16 @@ import {
   Typography,
 } from '@mui/material'
 import { adminApi } from '../../api'
-import { ApiError } from '../../api/client'
+import { useToast } from '../../components/AppToast'
 
 export default function SetupPage() {
   const navigate = useNavigate()
+  const toast = useToast()
   const [checking, setChecking] = useState(true)
   const [closed, setClosed] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [password2, setPassword2] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -39,21 +39,21 @@ export default function SetupPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
     if (password !== password2) {
-      setError('两次输入的密码不一致')
+      toast.error('两次输入的密码不一致')
       return
     }
     if (password.length < 6) {
-      setError('密码至少 6 位')
+      toast.error('密码至少 6 位')
       return
     }
     setSubmitting(true)
     try {
-      await adminApi.setup(username.trim(), password)
-      navigate('/admin/quotes', { replace: true })
+      const data = await adminApi.setup(username.trim(), password)
+      toast.fromSuccess(data)
+      navigate('/admin/quotes/review', { replace: true })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '初始化失败')
+      toast.fromError(err)
     } finally {
       setSubmitting(false)
     }
@@ -89,11 +89,6 @@ export default function SetupPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           首次部署时创建第一个管理员账号。创建后此页将不可用。
         </Typography>
-        {error ? (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        ) : null}
         <Stack component="form" spacing={2} onSubmit={(e) => void handleSubmit(e)}>
           <TextField
             label="用户名"

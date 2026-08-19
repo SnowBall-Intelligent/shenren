@@ -14,13 +14,21 @@ import type {
 export const publicApi = {
   getSite: () => apiJson<SiteInfo>('/api/site'),
 
-  getQuotes: (page = 1, pageSize = 20) =>
-    apiJson<Paginated<Quote>>(`/api/quotes?page=${page}&page_size=${pageSize}`),
+  getQuotes: (page = 1, pageSize = 20, personId?: number) => {
+    const q = new URLSearchParams()
+    q.set('page', String(page))
+    q.set('page_size', String(pageSize))
+    if (personId != null) q.set('person_id', String(personId))
+    return apiJson<Paginated<Quote>>(`/api/quotes?${q}`)
+  },
 
   getPersons: () => apiJson<Person[] | { items: Person[] }>('/api/persons'),
 
   submit: (payload: SubmissionPayload) =>
-    apiJson<{ id: number }>('/api/submissions', { method: 'POST', body: payload }),
+    apiJson<{ id: number; status?: string; message?: string }>('/api/submissions', {
+      method: 'POST',
+      body: payload,
+    }),
 }
 
 export function normalizePersons(data: Person[] | { items: Person[] }): Person[] {
@@ -76,10 +84,23 @@ export const adminApi = {
     apiJson<Quote>(`/api/admin/quotes/${id}/reject`, { method: 'POST', body: {} }),
 
   createQuote: (body: { person_id: number; content: string; source?: string | null }) =>
-    apiJson<Quote>('/api/admin/quotes', { method: 'POST', body }),
+    apiJson<Quote & { message?: string }>('/api/admin/quotes', { method: 'POST', body }),
+
+  updateQuote: (
+    id: number,
+    body: { person_id: number; content: string; source?: string | null },
+  ) => apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}`, { method: 'PUT', body }),
+
+  deleteQuote: (id: number) =>
+    apiJson<{ message?: string }>(`/api/admin/quotes/${id}`, { method: 'DELETE' }),
 
   // Persons
-  listPersons: () => apiJson<Person[] | { items: Person[] }>('/api/admin/persons'),
+  listPersons: (params: { page?: number; page_size?: number } = {}) => {
+    const q = new URLSearchParams()
+    q.set('page', String(params.page ?? 1))
+    q.set('page_size', String(params.page_size ?? 20))
+    return apiJson<Paginated<Person>>(`/api/admin/persons?${q}`)
+  },
 
   createPerson: (form: FormData) => apiForm<Person>('/api/admin/persons', form),
 

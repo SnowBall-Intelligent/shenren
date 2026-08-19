@@ -1,7 +1,8 @@
 import { Avatar, Box, Typography } from '@mui/material'
 import type { Quote } from '../api/types'
 import { nameInitial, uploadUrl } from '../api/client'
-import { AVATAR_COL, BUBBLE_BG } from '../theme'
+import { AVATAR_COL, BUBBLE_BG, BUBBLE_TEXT } from '../theme'
+import QuoteMarkdown from './QuoteMarkdown'
 
 interface QuoteBubbleProps {
   quote: Quote
@@ -48,17 +49,19 @@ export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubb
             display: 'inline-block',
             maxWidth: '100%',
             bgcolor: BUBBLE_BG,
+            color: BUBBLE_TEXT,
             borderRadius: '12px',
             px: 1.5,
             py: 1,
             wordBreak: 'break-word',
           }}
         >
-          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>
-            {quote.content}
-          </Typography>
+          <QuoteMarkdown content={quote.content} />
           {quote.source ? (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+            <Typography
+              variant="caption"
+              sx={{ color: 'text.secondary', display: 'block', mt: 0.75 }}
+            >
               来源：{quote.source}
             </Typography>
           ) : null}

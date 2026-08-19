@@ -48,4 +48,5 @@ export const theme = createTheme({
 })
 
 export const BUBBLE_BG = '#2c2c2c'
+export const BUBBLE_TEXT = '#e0e0e0'
 export const AVATAR_COL = 44

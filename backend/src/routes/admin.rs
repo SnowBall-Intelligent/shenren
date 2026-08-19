@@ -10,7 +10,9 @@ use tower_sessions::Session;
 
 use crate::entities::{admins, persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
-use crate::routes::public::{ensure_site_settings, PersonBrief, SiteResponse};
+use crate::routes::public::{
+    ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
+};
 use crate::services::auth::{
     admin_count, find_admin_by_username, hash_password, require_admin, verify_password,
     SESSION_ADMIN_ID,
@@ -45,6 +47,17 @@ pub struct AdminInfo {
     pub id: i64,
     pub username: String,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+fn admin_info(admin: &admins::Model, message: Option<&str>) -> AdminInfo {
+    AdminInfo {
+        id: admin.id,
+        username: admin.username.clone(),
+        created_at: admin.created_at,
+        message: message.map(str::to_string),
+    }
 }
 
 #[derive(Deserialize)]
@@ -82,6 +95,8 @@ pub struct AdminQuoteItem {
     pub reviewed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub reviewed_by: Option<i64>,
     pub person: Option<PersonBrief>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,11 +166,7 @@ pub async fn setup(
 
     Ok((
         StatusCode::CREATED,
-        Json(AdminInfo {
-            id: admin.id,
-            username: admin.username,
-            created_at: admin.created_at,
-        }),
+        Json(admin_info(&admin, Some("初始化成功"))),
     ))
 }
 
@@ -176,11 +187,7 @@ pub async fn login(
     session.cycle_id().await?;
     session.insert(SESSION_ADMIN_ID, admin.id).await?;
 
-    Ok(Json(AdminInfo {
-        id: admin.id,
-        username: admin.username,
-        created_at: admin.created_at,
-    }))
+    Ok(Json(admin_info(&admin, Some("登录成功"))))
 }
 
 pub async fn logout(session: Session) -> AppResult<StatusCode> {
@@ -190,11 +197,7 @@ pub async fn logout(session: Session) -> AppResult<StatusCode> {
 
 pub async fn me(State(state): State<AppState>, session: Session) -> AppResult<Json<AdminInfo>> {
     let admin = require_admin(&session, &state.db).await?;
-    Ok(Json(AdminInfo {
-        id: admin.id,
-        username: admin.username,
-        created_at: admin.created_at,
-    }))
+    Ok(Json(admin_info(&admin, None)))
 }
 
 pub async fn list_admins(
@@ -208,11 +211,7 @@ pub async fn list_admins(
         .await?;
     Ok(Json(
         rows.into_iter()
-            .map(|a| AdminInfo {
-                id: a.id,
-                username: a.username,
-                created_at: a.created_at,
-            })
+            .map(|a| admin_info(&a, None))
             .collect(),
     ))
 }
@@ -245,11 +244,7 @@ pub async fn create_admin(
 
     Ok((
         StatusCode::CREATED,
-        Json(AdminInfo {
-            id: admin.id,
-            username: admin.username,
-            created_at: admin.created_at,
-        }),
+        Json(admin_info(&admin, Some("管理员已创建"))),
     ))
 }
 
@@ -290,6 +285,7 @@ pub async fn get_settings(
         logo_url: settings.logo_url,
         footer: settings.footer,
         allow_propose_person: settings.allow_propose_person,
+        message: None,
     }))
 }
 
@@ -329,20 +325,40 @@ pub async fn update_settings(
         logo_url: updated.logo_url,
         footer: updated.footer,
         allow_propose_person: updated.allow_propose_person,
+        message: Some("已保存".to_string()),
     }))
+}
+
+#[derive(Deserialize)]
+pub struct AdminPersonsQuery {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct PaginatedPersons {
+    pub items: Vec<PersonAdminItem>,
+    pub page: u64,
+    pub page_size: u64,
+    pub total: u64,
 }
 
 pub async fn list_persons_admin(
     State(state): State<AppState>,
     session: Session,
-) -> AppResult<Json<Vec<PersonAdminItem>>> {
+    Query(query): Query<AdminPersonsQuery>,
+) -> AppResult<Json<PaginatedPersons>> {
     let _ = require_admin(&session, &state.db).await?;
-    let rows = persons::Entity::find()
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
+    let paginator = persons::Entity::find()
         .order_by_desc(persons::Column::CreatedAt)
-        .all(&state.db)
-        .await?;
-    Ok(Json(
-        rows.into_iter()
+        .paginate(&state.db, page_size);
+    let total = paginator.num_items().await?;
+    let rows = paginator.fetch_page(page - 1).await?;
+    Ok(Json(PaginatedPersons {
+        items: rows
+            .into_iter()
             .map(|p| PersonAdminItem {
                 id: p.id,
                 name: p.name,
@@ -350,7 +366,10 @@ pub async fn list_persons_admin(
                 created_at: p.created_at,
             })
             .collect(),
-    ))
+        page,
+        page_size,
+        total,
+    }))
 }
 
 async fn insert_person(
@@ -478,13 +497,7 @@ pub async fn create_quote(
 ) -> AppResult<(StatusCode, Json<AdminQuoteItem>)> {
     let admin = require_admin(&session, &state.db).await?;
 
-    let content = body.content.trim().to_string();
-    if content.is_empty() {
-        return Err(AppError::bad_request("言论内容不能为空"));
-    }
-    if content.chars().count() > 2000 {
-        return Err(AppError::bad_request("言论内容过长"));
-    }
+    let content = normalize_quote_content(&body.content)?;
 
     let person = persons::Entity::find_by_id(body.person_id)
         .one(&state.db)
@@ -528,8 +541,71 @@ pub async fn create_quote(
                 name: person.name,
                 avatar_url: AppState::avatar_url(&person.avatar_path),
             }),
+            message: Some("语录已添加".to_string()),
         }),
     ))
+}
+
+pub async fn update_quote(
+    State(state): State<AppState>,
+    session: Session,
+    Path(id): Path<i64>,
+    Json(body): Json<CreateQuoteBody>,
+) -> AppResult<Json<AdminQuoteItem>> {
+    let _ = require_admin(&session, &state.db).await?;
+    let quote = quotes::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::not_found("言论不存在"))?;
+
+    let content = normalize_quote_content(&body.content)?;
+    let person = persons::Entity::find_by_id(body.person_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::bad_request("神人不存在"))?;
+    let source = body
+        .source
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let mut am: quotes::ActiveModel = quote.into();
+    am.person_id = Set(Some(person.id));
+    am.proposed_person_name = Set(None);
+    am.content = Set(content);
+    am.source = Set(source);
+    let updated = am.update(&state.db).await?;
+
+    Ok(Json(AdminQuoteItem {
+        id: updated.id,
+        person_id: updated.person_id,
+        proposed_person_name: updated.proposed_person_name,
+        content: updated.content,
+        source: updated.source,
+        status: updated.status,
+        created_at: updated.created_at,
+        reviewed_at: updated.reviewed_at,
+        reviewed_by: updated.reviewed_by,
+        person: Some(PersonBrief {
+            id: person.id,
+            name: person.name,
+            avatar_url: AppState::avatar_url(&person.avatar_path),
+        }),
+        message: Some("语录已更新".to_string()),
+    }))
+}
+
+pub async fn delete_quote(
+    State(state): State<AppState>,
+    session: Session,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    let _ = require_admin(&session, &state.db).await?;
+    let quote = quotes::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::not_found("言论不存在"))?;
+    quotes::Entity::delete_by_id(quote.id).exec(&state.db).await?;
+    Ok(Json(serde_json::json!({ "message": "语录已删除" })))
 }
 
 pub async fn list_quotes_admin(
@@ -548,7 +624,16 @@ pub async fn list_quotes_admin(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        finder = finder.filter(quotes::Column::Status.eq(status));
+        if status == "unapproved" {
+            finder = finder.filter(
+                quotes::Column::Status.is_in([
+                    quotes::status::PENDING,
+                    quotes::status::REJECTED,
+                ]),
+            );
+        } else {
+            finder = finder.filter(quotes::Column::Status.eq(status));
+        }
     }
 
     // Pending first when no status filter, then newest.
@@ -591,6 +676,7 @@ pub async fn list_quotes_admin(
             reviewed_at: q.reviewed_at,
             reviewed_by: q.reviewed_by,
             person,
+            message: None,
         });
     }
 
@@ -676,6 +762,7 @@ pub async fn approve_quote(
         reviewed_at: updated.reviewed_at,
         reviewed_by: updated.reviewed_by,
         person,
+        message: None,
     }))
 }
 
@@ -769,6 +856,7 @@ pub async fn approve_quote_json(
         reviewed_at: updated.reviewed_at,
         reviewed_by: updated.reviewed_by,
         person,
+        message: None,
     }))
 }
 
@@ -818,5 +906,6 @@ pub async fn reject_quote(
         reviewed_at: updated.reviewed_at,
         reviewed_by: updated.reviewed_by,
         person,
+        message: None,
     }))
 }

@@ -19,7 +19,7 @@ async function parseError(res: Response): Promise<ApiError> {
   } catch {
     /* ignore */
   }
-  const message = body?.error || body?.message || res.statusText || `HTTP ${res.status}`
+  const message = body?.message || body?.error || res.statusText || `HTTP ${res.status}`
   return new ApiError(res.status, message, body)
 }
 

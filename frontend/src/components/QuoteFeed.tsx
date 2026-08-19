@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
 import { publicApi } from '../api'
 import type { Quote } from '../api/types'
@@ -14,8 +14,12 @@ export default function QuoteFeed() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const inFlight = useRef(false)
 
   const loadPage = useCallback(async (nextPage: number, append: boolean) => {
+    if (inFlight.current) return
+    inFlight.current = true
     if (append) setLoadingMore(true)
     else setLoading(true)
     setError(null)
@@ -30,6 +34,7 @@ export default function QuoteFeed() {
     } finally {
       setLoading(false)
       setLoadingMore(false)
+      inFlight.current = false
     }
   }, [])
 
@@ -38,6 +43,21 @@ export default function QuoteFeed() {
   }, [loadPage])
 
   const hasMore = quotes.length < total
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasMore || loading) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !inFlight.current) {
+          void loadPage(page + 1, true)
+        }
+      },
+      { root: null, rootMargin: '240px', threshold: 0 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasMore, loading, loadPage, page])
 
   if (loading) {
     return (
@@ -88,21 +108,14 @@ export default function QuoteFeed() {
         )
       })}
 
-      {hasMore ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', pt: 3, pb: 1 }}>
-          <Button
-            variant="outlined"
-            disabled={loadingMore}
-            onClick={() => void loadPage(page + 1, true)}
-          >
-            {loadingMore ? <CircularProgress size={20} /> : '加载更多'}
-          </Button>
-        </Box>
-      ) : (
-        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center', pt: 3 }}>
-          没有更多了
-        </Typography>
-      )}
+      <Box ref={sentinelRef} sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+        {loadingMore ? <CircularProgress size={22} /> : null}
+        {!hasMore && !loadingMore ? (
+          <Typography variant="caption" color="text.secondary">
+            没有更多了
+          </Typography>
+        ) : null}
+      </Box>
     </Stack>
   )
 }

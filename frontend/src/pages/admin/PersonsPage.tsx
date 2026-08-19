@@ -11,47 +11,54 @@ import {
   DialogTitle,
   IconButton,
   Stack,
+  TablePagination,
   TextField,
   Typography,
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
-import { adminApi, normalizePersons } from '../../api'
+import { adminApi } from '../../api'
 import type { Person } from '../../api/types'
 import { ApiError, nameInitial, uploadUrl } from '../../api/client'
 import QuoteCreateDialog from './QuoteCreateDialog'
+import { useToast } from '../../components/AppToast'
 
 export default function PersonsPage() {
+  const toast = useToast()
   const [persons, setPersons] = useState<Person[]>([])
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'create' | Person | null>(null)
   const [quotePerson, setQuotePerson] = useState<Person | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (p = 1, size = pageSize) => {
     setLoading(true)
-    setError(null)
     try {
-      const data = await adminApi.listPersons()
-      setPersons(normalizePersons(data))
+      const data = await adminApi.listPersons({ page: p, page_size: size })
+      setPersons(data.items)
+      setTotal(data.total)
+      setPage(data.page)
+      setPageSize(data.page_size)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '加载失败')
+      toast.fromError(e)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [pageSize, toast])
 
   useEffect(() => {
-    void load()
+    void load(1)
   }, [load])
 
   const handleDelete = async (id: number) => {
     if (!window.confirm('确定删除该神人？')) return
     try {
       await adminApi.deletePerson(id)
-      await load()
+      await load(page)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '删除失败')
+      toast.fromError(e)
     }
   }
 
@@ -59,18 +66,12 @@ export default function PersonsPage() {
     <Box>
       <Stack direction="row" sx={{ mb: 2, justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="body2" color="text.secondary">
-          共 {persons.length} 位神人
+          共 {total} 位神人
         </Typography>
         <Button variant="contained" onClick={() => setDialog('create')}>
           新增神人
         </Button>
       </Stack>
-
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      ) : null}
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -111,18 +112,37 @@ export default function PersonsPage() {
         </Stack>
       )}
 
+      <TablePagination
+        component="div"
+        count={total}
+        page={Math.max(0, page - 1)}
+        onPageChange={(_, next) => void load(next + 1, pageSize)}
+        rowsPerPage={pageSize}
+        onRowsPerPageChange={(e) => {
+          const size = parseInt(e.target.value, 10)
+          setPageSize(size)
+          void load(1, size)
+        }}
+        rowsPerPageOptions={[10, 20, 50]}
+        labelRowsPerPage="每页"
+        labelDisplayedRows={({ from, to, count }) =>
+          `${from}–${to} / ${count === -1 ? `超过 ${to}` : count}`
+        }
+      />
+
       <PersonDialog
         open={dialog !== null}
         person={dialog === 'create' || dialog === null ? null : dialog}
         onClose={() => setDialog(null)}
         onSaved={async () => {
           setDialog(null)
-          await load()
+          await load(page)
         }}
       />
       <QuoteCreateDialog
         open={quotePerson !== null}
         person={quotePerson}
+        persons={persons}
         onClose={() => setQuotePerson(null)}
         onCreated={() => setQuotePerson(null)}
       />
