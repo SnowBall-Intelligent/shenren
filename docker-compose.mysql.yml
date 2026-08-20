@@ -1,0 +1,36 @@
+# Overlay: run MySQL in Compose instead of the host.
+#   docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: shenren-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-shenren}
+      MYSQL_USER: ${MYSQL_USER:-shenren}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-shenren}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - shenren_mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  app:
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-mysql://shenren:shenren@mysql:3306/shenren}
+
+volumes:
+  shenren_mysql_data:

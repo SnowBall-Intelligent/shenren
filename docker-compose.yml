@@ -1,20 +1,29 @@
+# Default stack: app talks to MySQL on the Docker host.
+#   docker compose up -d
+#   DATABASE_URL defaults to mysql://shenren:shenren@host.docker.internal:3306/shenren
+#
+# Bundled MySQL (CI manual/release, or local opt-in):
+#   docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d
+
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: shenren-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: shenren
-      MYSQL_USER: shenren
-      MYSQL_PASSWORD: shenren
+  app:
+    image: ${SHENREN_IMAGE:-shenren:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "3306:3306"
+      - "${PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-mysql://shenren:shenren@host.docker.internal:3306/shenren}
+      BIND_ADDR: 0.0.0.0:3000
+      UPLOADS_DIR: /data/uploads
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
-      - shenren_mysql_data:/var/lib/mysql
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+      - shenren_uploads:/data/uploads
+    restart: unless-stopped
 
 volumes:
-  shenren_mysql_data:
+  shenren_uploads:

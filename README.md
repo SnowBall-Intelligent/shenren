@@ -1,18 +1,19 @@
 # 神人网
 
-收录逆天言论的站点：React + MUI 前台，Rust（Axum + SeaORM）后端。同一套迁移同时支持 **SQLite（开发）** 与 **MySQL（生产）**。
-
-> **Frontend note:** 若仓库里还没有 `frontend/`，请另行搭建 Vite + MUI 工程；后端可独立运行。生产构建后把 `frontend/dist` 交给 Axum 静态托管。
+收录逆天言论的站点：React + MUI 前台，Rust（Axum + SeaORM）**纯 API** 后端。同一套迁移同时支持 **SQLite（开发）** 与 **MySQL（生产）**。后端不托管任何前端页面；前台用 Vite 开发，生产由 Nginx / Pages 等单独部署。
 
 ## 目录
 
 ```
 shenren/
-  backend/           # Axum API + SeaORM + migrations
-  frontend/          # Vite + MUI（可由前端任务创建）
-  docker-compose.yml # 可选本地 MySQL
-  scripts/dev.ps1    # 同时启动前后端热重载
-  package.json       # concurrently 脚本
+  backend/                 # Axum API + SeaORM + migrations
+  frontend/                # Vite + MUI
+  Dockerfile               # API 镜像（Linux 二进制）
+  docker-compose.yml       # 默认：应用连宿主机 MySQL
+  docker-compose.mysql.yml # 可选：Compose 内再起 MySQL
+  .github/workflows/       # Linux 二进制 + GHCR 镜像
+  scripts/dev.ps1
+  package.json
 ```
 
 ## 数据库
@@ -25,13 +26,15 @@ DATABASE_URL=sqlite://data/shenren.db?mode=rwc
 
 相对路径相对于 `backend/` 工作目录。启动时自动跑迁移并创建默认站点配置。
 
-MySQL（生产 / 可选本地）：
+MySQL（生产）：**默认使用宿主机上已有的 MySQL**，不要用 Compose 再起一套，除非你显式加上 `docker-compose.mysql.yml`。
 
 ```bash
-# 启动可选 MySQL
-docker compose up -d
+# 宿主机 MySQL（Compose 默认）
+docker compose up -d --build
+# 等价于 DATABASE_URL=mysql://shenren:shenren@host.docker.internal:3306/shenren
 
-DATABASE_URL=mysql://shenren:shenren@127.0.0.1:3306/shenren
+# 可选：用容器里的 MySQL（本地没有 MySQL，或 CI 手动/发版探测）
+docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d --build
 ```
 
 两库使用同一套 `sea-orm-migration`，无 SQLite-only / MySQL-only SQL。
@@ -69,8 +72,9 @@ watchexec -e rs,toml -r cargo run
 | `DATABASE_URL` | `sqlite://data/shenren.db?mode=rwc` | SQLite 或 MySQL |
 | `BIND_ADDR` | `127.0.0.1:3000` | 监听地址 |
 | `UPLOADS_DIR` | `uploads` | 头像目录（相对 backend cwd） |
-| `FRONTEND_DIST` | `../frontend/dist` | 存在 `index.html` 时由 Axum 托管 |
 | `COOKIE_SECURE` | `false` | 生产 HTTPS 设为 `true` |
+| `COOKIE_SAMESITE` | `Lax` | `Lax` / `Strict` / `None`（跨站前端用 `None`，且须 HTTPS） |
+| `CORS_ORIGINS` | （空） | 额外允许的前端 Origin，逗号分隔。`http://localhost:*` 与 `http://127.0.0.1:*` 始终允许 |
 
 ## 前后端一起开发
 
@@ -84,21 +88,47 @@ cargo install watchexec-cli   # 若尚未安装
 npm run dev
 ```
 
-- 前台：`npm --prefix frontend run dev`（Vite HMR；请把 `/api` 与 `/uploads` proxy 到 `127.0.0.1:3000`）
-- 后台：`watchexec -e rs,toml -r --cwd backend cargo run`
+- 前台：`npm --prefix frontend run dev`（Vite HMR；`/api` 与 `/uploads` 已 proxy 到 `127.0.0.1:3000`）
+- 后台：`watchexec -e rs,toml -r --cwd backend cargo run`（只提供 API，不返回 HTML）
 
 ## 生产
 
 ```powershell
-npm --prefix frontend run build
 cd backend
 $env:DATABASE_URL = "mysql://user:pass@host:3306/shenren"
 $env:COOKIE_SECURE = "true"
-$env:FRONTEND_DIST = "../frontend/dist"
+$env:CORS_ORIGINS = "https://your.frontend.example"
 cargo run --release
 ```
 
-Axum 在检测到 `FRONTEND_DIST/index.html` 后会用 `tower-http` `ServeDir` 托管静态资源与 SPA fallback。
+前台单独 `npm --prefix frontend run build` 后交给静态托管，不要再塞进 Axum。
+
+或 Docker（API 镜像，默认连宿主机 MySQL）：
+
+```bash
+export DATABASE_URL=mysql://user:pass@host.docker.internal:3306/shenren
+export COOKIE_SECURE=true
+export CORS_ORIGINS=https://your.frontend.example
+docker compose up -d --build
+```
+
+## CI
+
+GitHub Actions（`.github/workflows/build.yml`）会构建：
+
+- Linux `x86_64` 可执行文件 `shenren-x86_64-unknown-linux-gnu`
+- Docker 镜像（仅 API：`cargo build --release`）
+
+触发：
+
+| 事件 | 行为 |
+|------|------|
+| `push` / `pull_request` | 构建镜像与二进制，上传 artifact；**不**推 GHCR，**不**起 MySQL |
+| **手动** `workflow_dispatch` | 默认用 Compose MySQL 做 `/api/site` 启动探测，并推 GHCR（可在输入里关掉） |
+| **任意 Release**（含预发布） | 同上，并把二进制挂到 Release；正式版额外打 `latest` |
+| 预发布改为正式版 | `release.edited` 且 `prerelease: true → false` 时再跑一遍，补打 `latest` |
+
+镜像：`ghcr.io/<owner>/<repo>`。手动运行可取消「Use Compose MySQL」以跳过探测（假定连宿主机 MySQL）。
 
 ## 公开 API
 

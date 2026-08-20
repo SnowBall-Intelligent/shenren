@@ -1,0 +1,25 @@
+# Git / IDE
+.git
+.github
+.gitignore
+.idea
+.vscode
+*.md
+
+# Frontend is not part of the API image
+frontend
+
+# Build outputs
+backend/target
+backend/data
+backend/uploads
+node_modules
+
+# Local env / DB
+.env
+.env.*
+*.db
+*.db-*
+
+# Compose override for local experiments
+docker-compose.override.yml

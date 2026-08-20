@@ -162,7 +162,7 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
                 </Stack>
               ) : null}
               {!isReview ? (
-                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
                   <IconButton size="small" onClick={() => setEditQuote(q)} aria-label="修改">
                     <EditIcon fontSize="small" />
                   </IconButton>

@@ -2,11 +2,12 @@ pub mod admin;
 pub mod public;
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{header, Method};
+use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::routing::{delete, get, post, put};
-use axum::Router;
+use axum::{Json, Router};
+use serde_json::json;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -19,8 +20,8 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
     let session_layer = SessionManagerLayer::new(session_store)
         .with_name("shenren_session")
         .with_http_only(true)
-        .with_same_site(SameSite::Lax)
-        .with_secure(config.cookie_secure)
+        .with_same_site(config.cookie_same_site)
+        .with_secure(config.cookie_secure || config.cookie_same_site == SameSite::None)
         .with_path("/");
 
     let api = Router::new()
@@ -33,29 +34,21 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
 
     let uploads = ServeDir::new(state.uploads_dir().clone());
 
-    let mut router = Router::new()
+    tracing::info!("API-only mode; frontend is not served");
+
+    Router::new()
         .nest("/api", api)
         .nest_service("/uploads", uploads)
+        .fallback(|| async {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "message": "not found", "error": "not found" })),
+            )
+        })
         .layer(session_layer)
         .layer(TraceLayer::new_for_http())
-        // Last layer is outermost: allow Vite (localhost:5173) to call :3000
-        // directly with cookies if the proxy is bypassed.
-        .layer(dev_cors_layer())
-        .with_state(state);
-
-    if config.frontend_dist.join("index.html").is_file() {
-        let index = ServeFile::new(config.frontend_dist.join("index.html"));
-        let dist = ServeDir::new(config.frontend_dist.clone()).not_found_service(index);
-        router = router.fallback_service(dist);
-        tracing::info!("serving frontend from {}", config.frontend_dist.display());
-    } else {
-        tracing::info!(
-            "frontend dist not found at {}; API-only mode",
-            config.frontend_dist.display()
-        );
-    }
-
-    router
+        .layer(cors_layer(config))
+        .with_state(state)
 }
 
 fn admin_routes() -> Router<AppState> {
@@ -96,11 +89,19 @@ fn admin_routes() -> Router<AppState> {
         .route("/quotes/{id}/reject", post(admin::reject_quote))
 }
 
-fn dev_cors_layer() -> CorsLayer {
+fn cors_layer(config: &Config) -> CorsLayer {
+    let extra: Vec<HeaderValue> = config
+        .cors_origins
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+
     CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _| {
-            origin.as_bytes().starts_with(b"http://localhost:")
-                || origin.as_bytes().starts_with(b"http://127.0.0.1:")
+        .allow_origin(AllowOrigin::predicate(move |origin, _| {
+            let raw = origin.as_bytes();
+            raw.starts_with(b"http://localhost:")
+                || raw.starts_with(b"http://127.0.0.1:")
+                || extra.iter().any(|allowed| allowed.as_bytes() == raw)
         }))
         .allow_methods([
             Method::GET,
