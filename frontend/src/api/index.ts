@@ -5,6 +5,7 @@ import type {
   BootstrapStatus,
   Paginated,
   Person,
+  CaptchaSettings,
   Quote,
   SiteInfo,
   SiteSettingsUpdate,
@@ -115,6 +116,11 @@ export const adminApi = {
 
   updateSettings: (body: SiteSettingsUpdate) =>
     apiJson<SiteInfo>('/api/admin/settings', { method: 'PUT', body }),
+
+  getCaptcha: () => apiJson<CaptchaSettings>('/api/admin/captcha'),
+
+  updateCaptcha: (body: { providers: CaptchaSettings['providers'] }) =>
+    apiJson<CaptchaSettings>('/api/admin/captcha', { method: 'PUT', body }),
 
   // Admins
   listAdmins: () => apiJson<Admin[] | { items: Admin[] }>('/api/admin/admins'),

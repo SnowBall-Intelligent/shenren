@@ -10,7 +10,16 @@ use std::net::SocketAddr;
 
 use crate::entities::{persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
+use crate::services::captcha::{CaptchaPayload, PublicProvider};
 use crate::state::AppState;
+
+#[derive(Serialize)]
+pub struct PublicCaptcha {
+    pub providers: Vec<PublicProvider>,
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_key: Option<String>,
+}
 
 #[derive(Serialize)]
 pub struct SiteResponse {
@@ -20,7 +29,22 @@ pub struct SiteResponse {
     pub footer: Option<String>,
     pub allow_propose_person: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub captcha: Option<PublicCaptcha>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+pub fn public_captcha(settings: &site_settings::Model) -> PublicCaptcha {
+    let providers = crate::services::captcha::public_provider_list(settings);
+    let (provider, site_key) = match providers.first() {
+        Some(item) => (item.provider.clone(), Some(item.site_key.clone())),
+        None => ("none".to_string(), None),
+    };
+    PublicCaptcha {
+        providers,
+        provider,
+        site_key,
+    }
 }
 
 #[derive(Serialize)]
@@ -77,16 +101,19 @@ pub struct SubmissionBody {
     pub proposed_person_name: Option<String>,
     pub content: String,
     pub source: Option<String>,
+    pub captcha: Option<CaptchaPayload>,
 }
 
 pub async fn get_site(State(state): State<AppState>) -> AppResult<Json<SiteResponse>> {
     let settings = ensure_site_settings(&state).await?;
+    let captcha = public_captcha(&settings);
     Ok(Json(SiteResponse {
         site_name: settings.site_name,
         description: settings.description,
         logo_url: settings.logo_url,
         footer: settings.footer,
         allow_propose_person: settings.allow_propose_person,
+        captcha: Some(captcha),
         message: None,
     }))
 }
@@ -207,6 +234,8 @@ pub async fn create_submission(
         }
     };
 
+    crate::services::captcha::verify_submission_captcha(&settings, body.captcha.as_ref()).await?;
+
     let now = Utc::now().fixed_offset();
     let model = quotes::ActiveModel {
         person_id: Set(person_id),
@@ -246,6 +275,10 @@ pub async fn ensure_site_settings(state: &AppState) -> AppResult<site_settings::
         logo_url: Set(None),
         footer: Set(None),
         allow_propose_person: Set(false),
+        captcha_provider: Set("none".to_string()),
+        captcha_site_key: Set(None),
+        captcha_secret: Set(None),
+        captcha_providers: Set(Some("[]".to_string())),
         ..Default::default()
     };
     Ok(model.insert(&state.db).await?)

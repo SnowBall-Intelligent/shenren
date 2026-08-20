@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Autocomplete,
+  Avatar,
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -14,9 +16,11 @@ import {
   Typography,
 } from '@mui/material'
 import { normalizePersons, publicApi } from '../api'
-import type { Person, SiteInfo } from '../api/types'
+import type { CaptchaPayload, Person, SiteInfo } from '../api/types'
 import QuoteMarkdownEditor from './QuoteMarkdownEditor'
+import CaptchaWidget, { publicCaptchaList } from './CaptchaWidget'
 import { useToast } from './AppToast'
+import { ApiError, nameInitial, uploadUrl } from '../api/client'
 
 type Mode = 'existing' | 'propose'
 
@@ -39,6 +43,31 @@ export default function SubmitDialog({
   const [content, setContent] = useState('')
   const [source, setSource] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [captcha, setCaptcha] = useState<CaptchaPayload | null>(null)
+  const [captchaKey, setCaptchaKey] = useState(0)
+  const [skipSignal, setSkipSignal] = useState(0)
+  const captchaProviders = useMemo(() => publicCaptchaList(site?.captcha), [site?.captcha])
+  const captchaRequired = captchaProviders.length > 0
+
+  const handleCaptchaChange = useCallback((payload: CaptchaPayload | null) => {
+    setCaptcha(payload)
+  }, [])
+
+  const handleCaptchaExhausted = useCallback((message: string) => {
+    toast.error(message)
+  }, [toast])
+
+  const resetCaptcha = () => {
+    setCaptcha(null)
+    setCaptchaKey((k) => k + 1)
+  }
+
+  useEffect(() => {
+    if (!open) {
+      setCaptcha(null)
+      setSkipSignal(0)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -56,9 +85,10 @@ export default function SubmitDialog({
 
   const canSubmit = useMemo(() => {
     if (!content.trim()) return false
+    if (captchaRequired && !captcha) return false
     if (mode === 'existing') return person != null
     return proposedName.trim().length > 0
-  }, [content, mode, person, proposedName])
+  }, [captcha, captchaRequired, content, mode, person, proposedName])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,15 +100,24 @@ export default function SubmitDialog({
         proposed_person_name: mode === 'propose' ? proposedName.trim() : null,
         content: content.trim(),
         source: source.trim() || null,
+        captcha: captcha ?? undefined,
       })
       toast.fromSuccess(data)
       setContent('')
       setSource('')
       setProposedName('')
       setPerson(null)
+      setCaptcha(null)
       onClose()
     } catch (err) {
-      toast.fromError(err)
+      const fallback = err instanceof ApiError && err.body?.captcha_fallback
+      if (fallback) {
+        setCaptcha(null)
+        setSkipSignal((n) => n + 1)
+      } else {
+        toast.fromError(err)
+        resetCaptcha()
+      }
     } finally {
       setSubmitting(false)
     }
@@ -102,16 +141,43 @@ export default function SubmitDialog({
             ) : null}
 
             {mode === 'existing' ? (
-              <Autocomplete
-                options={persons}
-                value={person}
-                onChange={(_, v) => setPerson(v)}
-                getOptionLabel={(o) => o.name}
-                isOptionEqualToValue={(a, b) => a.id === b.id}
-                renderInput={(params) => (
-                  <TextField {...params} label="神人" required placeholder="搜索或选择" />
-                )}
-              />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                <Avatar
+                  src={person ? uploadUrl(person.avatar_url) : undefined}
+                  alt=""
+                  sx={{ width: 40, height: 40, fontSize: 16, flexShrink: 0 }}
+                >
+                  {person ? nameInitial(person.name) : '?'}
+                </Avatar>
+                <Autocomplete
+                  sx={{ flex: 1 }}
+                  options={persons}
+                  value={person}
+                  onChange={(_, v) => setPerson(v)}
+                  getOptionLabel={(o) => o.name}
+                  isOptionEqualToValue={(a, b) => a.id === b.id}
+                  renderOption={(props, option) => {
+                    const { key, ...rest } = props
+                    return (
+                      <li key={key} {...rest}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Avatar
+                            src={uploadUrl(option.avatar_url)}
+                            alt=""
+                            sx={{ width: 24, height: 24, fontSize: 12 }}
+                          >
+                            {nameInitial(option.name)}
+                          </Avatar>
+                          {option.name}
+                        </Box>
+                      </li>
+                    )
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="神人" required placeholder="搜索或选择" />
+                  )}
+                />
+              </Box>
             ) : (
               <TextField
                 label="新神人名称"
@@ -136,6 +202,16 @@ export default function SubmitDialog({
               value={source}
               onChange={(e) => setSource(e.target.value)}
             />
+
+            {open && captchaRequired ? (
+              <CaptchaWidget
+                key={captchaKey}
+                providers={captchaProviders}
+                skipSignal={skipSignal}
+                onChange={handleCaptchaChange}
+                onExhausted={handleCaptchaExhausted}
+              />
+            ) : null}
           </Stack>
         </DialogContent>
         <DialogActions>

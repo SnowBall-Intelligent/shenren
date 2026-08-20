@@ -26,6 +26,8 @@ import ExpandLess from '@mui/icons-material/ExpandLess'
 import ExpandMore from '@mui/icons-material/ExpandMore'
 import PeopleIcon from '@mui/icons-material/People'
 import SettingsIcon from '@mui/icons-material/Settings'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HomeIcon from '@mui/icons-material/Home'
@@ -55,7 +57,16 @@ const navItems: NavItem[] = [
     ],
   },
   { to: '/admin/persons', label: '神人管理', icon: <PeopleIcon /> },
-  { to: '/admin/settings', label: '站点设置', icon: <SettingsIcon /> },
+  {
+    id: 'settings',
+    label: '站点设置',
+    icon: <SettingsIcon />,
+    match: '/admin/settings',
+    children: [
+      { to: '/admin/settings', label: '基本信息', icon: <InfoOutlinedIcon /> },
+      { to: '/admin/settings/captcha', label: '人机验证', icon: <VerifiedUserIcon /> },
+    ],
+  },
   { to: '/admin/admins', label: '管理员', icon: <AdminPanelSettingsIcon /> },
 ]
 

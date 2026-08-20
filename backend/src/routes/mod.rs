@@ -72,6 +72,10 @@ fn admin_routes() -> Router<AppState> {
             get(admin::get_settings).put(admin::update_settings),
         )
         .route(
+            "/captcha",
+            get(admin::get_captcha).put(admin::update_captcha),
+        )
+        .route(
             "/persons",
             get(admin::list_persons_admin).post(admin::create_person),
         )

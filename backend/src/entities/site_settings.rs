@@ -14,6 +14,14 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub footer: Option<String>,
     pub allow_propose_person: bool,
+    pub captcha_provider: String,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub captcha_site_key: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub captcha_secret: Option<String>,
+    /// JSON array of `{ provider, site_key, secret }`, ordered by failover priority.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub captcha_providers: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

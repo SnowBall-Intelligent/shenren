@@ -285,6 +285,7 @@ pub async fn get_settings(
         logo_url: settings.logo_url,
         footer: settings.footer,
         allow_propose_person: settings.allow_propose_person,
+        captcha: None,
         message: None,
     }))
 }
@@ -325,8 +326,90 @@ pub async fn update_settings(
         logo_url: updated.logo_url,
         footer: updated.footer,
         allow_propose_person: updated.allow_propose_person,
+        captcha: None,
         message: Some("已保存".to_string()),
     }))
+}
+
+#[derive(Serialize)]
+pub struct CaptchaProviderOut {
+    pub provider: String,
+    pub site_key: Option<String>,
+    pub secret: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct CaptchaSettingsResponse {
+    pub providers: Vec<CaptchaProviderOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CaptchaProviderIn {
+    pub provider: String,
+    pub site_key: Option<String>,
+    pub secret: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCaptchaBody {
+    pub providers: Vec<CaptchaProviderIn>,
+}
+
+fn captcha_settings_response(
+    settings: &site_settings::Model,
+    message: Option<&str>,
+) -> CaptchaSettingsResponse {
+    let providers = crate::services::captcha::parse_providers(settings)
+        .into_iter()
+        .map(|item| CaptchaProviderOut {
+            provider: item.provider,
+            site_key: Some(item.site_key),
+            secret: Some(item.secret),
+        })
+        .collect();
+    CaptchaSettingsResponse {
+        providers,
+        message: message.map(str::to_string),
+    }
+}
+
+pub async fn get_captcha(
+    State(state): State<AppState>,
+    session: Session,
+) -> AppResult<Json<CaptchaSettingsResponse>> {
+    let _ = require_admin(&session, &state.db).await?;
+    let settings = ensure_site_settings(&state).await?;
+    Ok(Json(captcha_settings_response(&settings, None)))
+}
+
+pub async fn update_captcha(
+    State(state): State<AppState>,
+    session: Session,
+    Json(body): Json<UpdateCaptchaBody>,
+) -> AppResult<Json<CaptchaSettingsResponse>> {
+    let _ = require_admin(&session, &state.db).await?;
+    let settings = ensure_site_settings(&state).await?;
+
+    let providers = crate::services::captcha::normalize_provider_list(
+        body.providers
+            .into_iter()
+            .map(|item| (item.provider, item.site_key, item.secret))
+            .collect(),
+    )?;
+    let json = crate::services::captcha::serialize_providers(&providers)?;
+    let (legacy_provider, legacy_site_key, legacy_secret) =
+        crate::services::captcha::first_as_legacy(&providers);
+
+    let mut am: site_settings::ActiveModel = settings.into();
+    am.captcha_providers = Set(Some(json));
+    am.captcha_provider = Set(legacy_provider);
+    am.captcha_site_key = Set(legacy_site_key);
+    am.captcha_secret = Set(legacy_secret);
+    let updated = am.update(&state.db).await?;
+
+    Ok(Json(captcha_settings_response(&updated, Some("已保存"))))
 }
 
 #[derive(Deserialize)]

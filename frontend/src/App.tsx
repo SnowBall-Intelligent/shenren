@@ -9,6 +9,7 @@ import LoginPage from './pages/admin/LoginPage'
 import QuotesPage from './pages/admin/QuotesPage'
 import PersonsPage from './pages/admin/PersonsPage'
 import SettingsPage from './pages/admin/SettingsPage'
+import CaptchaSettingsPage from './pages/admin/CaptchaSettingsPage'
 import AdminsPage from './pages/admin/AdminsPage'
 import { ToastProvider } from './components/AppToast'
 
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="quotes/new" element={<Navigate to="/admin/quotes/list" replace />} />
             <Route path="persons" element={<PersonsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/captcha" element={<CaptchaSettingsPage />} />
             <Route path="admins" element={<AdminsPage />} />
           </Route>
 

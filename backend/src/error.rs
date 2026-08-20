@@ -26,6 +26,8 @@ pub enum AppError {
     Session(#[from] tower_sessions::session::Error),
     #[error("{0}")]
     Internal(String),
+    #[error("{0}")]
+    CaptchaFailed(String),
 }
 
 impl AppError {
@@ -51,6 +53,10 @@ impl AppError {
 
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
+    }
+
+    pub fn captcha_failed(msg: impl Into<String>) -> Self {
+        Self::CaptchaFailed(msg.into())
     }
 }
 
@@ -85,9 +91,14 @@ impl IntoResponse for AppError {
                 tracing::error!("internal error: {m}");
                 (StatusCode::INTERNAL_SERVER_ERROR, m.clone())
             }
+            AppError::CaptchaFailed(m) => (StatusCode::BAD_REQUEST, m.clone()),
         };
 
-        (status, Json(json!({ "message": message, "error": message }))).into_response()
+        let mut body = json!({ "message": message, "error": message });
+        if matches!(self, AppError::CaptchaFailed(_)) {
+            body["captcha_fallback"] = json!(true);
+        }
+        (status, Json(body)).into_response()
     }
 }
 
