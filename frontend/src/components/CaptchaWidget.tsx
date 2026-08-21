@@ -41,13 +41,21 @@ declare global {
   }
 }
 
+const SCRIPT_SRI = {
+  turnstile:
+    'sha384-WvykcXOFmx4gv5x+RbitNq8ErqYDzeDmWG33p+AewiLdZo6kXtYDxJKPzyZsLB8r',
+  recaptcha:
+    'sha384-s78fJ1/cnyHjnT01009EsTtrAGY4qncg0dZNiFkyTEOB1PeUZQ/P4zegwL0bo+F5',
+  geetest: 'sha384-y8eoySWiKpS5tGPFaZr0uRUig3Qp3WwCIyfiEQnn5FC4ZprGhjVVifZ0JNZxedUy',
+} as const
+
 const LABELS: Record<CaptchaVendor, string> = {
   turnstile: 'Cloudflare Turnstile',
   recaptcha: 'reCAPTCHA',
   geetest: '极验',
 }
 
-function loadScript(src: string, id: string): Promise<void> {
+function loadScript(src: string, id: string, integrity: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const existing = document.getElementById(id) as HTMLScriptElement | null
     if (existing) {
@@ -63,6 +71,8 @@ function loadScript(src: string, id: string): Promise<void> {
     script.id = id
     script.src = src
     script.async = true
+    script.crossOrigin = 'anonymous'
+    script.integrity = integrity
     script.onload = () => {
       script.dataset.loaded = '1'
       resolve()
@@ -139,6 +149,7 @@ function SingleWidget({
           await loadScript(
             'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
             'cf-turnstile-script',
+            SCRIPT_SRI.turnstile,
           )
           const turnstile = await waitFor(() => window.turnstile)
           if (cancelled) return
@@ -153,6 +164,7 @@ function SingleWidget({
           await loadScript(
             'https://www.recaptcha.net/recaptcha/api.js?render=explicit',
             'recaptcha-net-script',
+            SCRIPT_SRI.recaptcha,
           )
           const grecaptcha = await waitFor(() => window.grecaptcha)
           await new Promise<void>((resolve) => grecaptcha.ready(() => resolve()))
@@ -165,7 +177,11 @@ function SingleWidget({
             'error-callback': () => fail('reCAPTCHA 验证失败'),
           })
         } else if (provider === 'geetest') {
-          await loadScript('https://static.geetest.com/v4/gt4.js', 'geetest-gt4-script')
+          await loadScript(
+            'https://static.geetest.com/v4/gt4.js',
+            'geetest-gt4-script',
+            SCRIPT_SRI.geetest,
+          )
           const initGeetest4 = await waitFor(() => window.initGeetest4)
           if (cancelled) return
           await new Promise<void>((resolve, reject) => {

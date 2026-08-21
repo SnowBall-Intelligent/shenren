@@ -23,7 +23,12 @@ export const publicApi = {
     return apiJson<Paginated<Quote>>(`/api/quotes?${q}`)
   },
 
-  getPersons: () => apiJson<Person[] | { items: Person[] }>('/api/persons'),
+  getPersons: (q?: string, limit = 50) => {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    params.set('limit', String(limit))
+    return apiJson<Person[] | { items: Person[] }>(`/api/persons?${params}`)
+  },
 
   submit: (payload: SubmissionPayload) =>
     apiJson<{ id: number; status?: string; message?: string }>('/api/submissions', {

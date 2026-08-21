@@ -37,6 +37,8 @@ export default function SubmitDialog({
   const toast = useToast()
 
   const [persons, setPersons] = useState<Person[]>([])
+  const [personQuery, setPersonQuery] = useState('')
+  const [personsLoading, setPersonsLoading] = useState(false)
   const [mode, setMode] = useState<Mode>('existing')
   const [person, setPerson] = useState<Person | null>(null)
   const [proposedName, setProposedName] = useState('')
@@ -66,16 +68,33 @@ export default function SubmitDialog({
     if (!open) {
       setCaptcha(null)
       setSkipSignal(0)
+      setPersonQuery('')
+      setPerson(null)
     }
   }, [open])
 
   useEffect(() => {
     if (!open) return
-    publicApi
-      .getPersons()
-      .then((data) => setPersons(normalizePersons(data)))
-      .catch(() => setPersons([]))
-  }, [open])
+    let cancelled = false
+    setPersonsLoading(true)
+    const timer = window.setTimeout(() => {
+      publicApi
+        .getPersons(personQuery.trim() || undefined, 50)
+        .then((data) => {
+          if (!cancelled) setPersons(normalizePersons(data))
+        })
+        .catch(() => {
+          if (!cancelled) setPersons([])
+        })
+        .finally(() => {
+          if (!cancelled) setPersonsLoading(false)
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [open, personQuery])
 
   useEffect(() => {
     if (!allowPropose && mode === 'propose') {
@@ -151,9 +170,17 @@ export default function SubmitDialog({
                 </Avatar>
                 <Autocomplete
                   sx={{ flex: 1 }}
-                  options={persons}
+                  options={
+                    person && !persons.some((p) => p.id === person.id)
+                      ? [person, ...persons]
+                      : persons
+                  }
                   value={person}
                   onChange={(_, v) => setPerson(v)}
+                  inputValue={personQuery}
+                  onInputChange={(_, v) => setPersonQuery(v)}
+                  filterOptions={(x) => x}
+                  loading={personsLoading}
                   getOptionLabel={(o) => o.name}
                   isOptionEqualToValue={(a, b) => a.id === b.id}
                   renderOption={(props, option) => {
@@ -185,6 +212,7 @@ export default function SubmitDialog({
                 value={proposedName}
                 onChange={(e) => setProposedName(e.target.value)}
                 helperText="审核通过后会建立神人档案；未提供头像时使用名称首字生成"
+                slotProps={{ htmlInput: { maxLength: 64 } }}
               />
             )}
 
@@ -201,6 +229,7 @@ export default function SubmitDialog({
               label="来源 / 备注（可选）"
               value={source}
               onChange={(e) => setSource(e.target.value)}
+              slotProps={{ htmlInput: { maxLength: 500 } }}
             />
 
             {open && captchaRequired ? (

@@ -1,17 +1,27 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { CssBaseline, ThemeProvider } from '@mui/material'
+import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material'
 import { theme } from './theme'
 import PublicLayout from './layouts/PublicLayout'
-import AdminLayout from './layouts/AdminLayout'
 import HomePage from './pages/HomePage'
-import SetupPage from './pages/admin/SetupPage'
-import LoginPage from './pages/admin/LoginPage'
-import QuotesPage from './pages/admin/QuotesPage'
-import PersonsPage from './pages/admin/PersonsPage'
-import SettingsPage from './pages/admin/SettingsPage'
-import CaptchaSettingsPage from './pages/admin/CaptchaSettingsPage'
-import AdminsPage from './pages/admin/AdminsPage'
 import { ToastProvider } from './components/AppToast'
+
+const AdminLayout = lazy(() => import('./layouts/AdminLayout'))
+const SetupPage = lazy(() => import('./pages/admin/SetupPage'))
+const LoginPage = lazy(() => import('./pages/admin/LoginPage'))
+const QuotesPage = lazy(() => import('./pages/admin/QuotesPage'))
+const PersonsPage = lazy(() => import('./pages/admin/PersonsPage'))
+const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'))
+const CaptchaSettingsPage = lazy(() => import('./pages/admin/CaptchaSettingsPage'))
+const AdminsPage = lazy(() => import('./pages/admin/AdminsPage'))
+
+function RouteFallback() {
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}>
+      <CircularProgress />
+    </Box>
+  )
+}
 
 export default function App() {
   return (
@@ -19,6 +29,7 @@ export default function App() {
       <CssBaseline />
       <ToastProvider>
       <BrowserRouter>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route element={<PublicLayout />}>
             <Route index element={<HomePage />} />
@@ -42,6 +53,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
       </ToastProvider>
     </ThemeProvider>

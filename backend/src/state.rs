@@ -1,20 +1,22 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 
+use crate::cache::PublicReadCache;
 use crate::config::Config;
-use crate::services::rate_limit::RateLimiter;
+use crate::services::rate_limit::RateLimiters;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: DatabaseConnection,
     pub config: Arc<Config>,
-    pub rate_limiter: Arc<RateLimiter>,
+    pub rate_limiters: Arc<RateLimiters>,
+    pub cache: Arc<PublicReadCache>,
+    pub dummy_password_hash: Arc<str>,
 }
 
 impl AppState {
-    pub fn uploads_dir(&self) -> &PathBuf {
+    pub fn uploads_dir(&self) -> &std::path::PathBuf {
         &self.config.uploads_dir
     }
 

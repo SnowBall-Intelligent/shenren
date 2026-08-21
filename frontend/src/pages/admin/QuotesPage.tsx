@@ -67,7 +67,7 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
 
   useEffect(() => {
     publicApi
-      .getPersons()
+      .getPersons(undefined, 100)
       .then((d) => setPersons(normalizePersons(d)))
       .catch(() => setPersons([]))
   }, [])

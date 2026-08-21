@@ -12,9 +12,11 @@ migration = { path = "migration" }
 
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tokio = { version = "1", features = ["full"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tower = { version = "0.5", features = ["timeout", "limit"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors", "compression-gzip"] }
 tower-sessions = "0.14"
+bytes = "1"
+time = "0.3"
 
 sea-orm = { version = "1.1", features = [
   "sqlx-sqlite",

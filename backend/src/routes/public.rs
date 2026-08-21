@@ -1,17 +1,25 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+
 use axum::extract::{ConnectInfo, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::Response;
 use axum::Json;
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set,
 };
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 
 use crate::entities::{persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
+use crate::routes::cached_json;
 use crate::services::captcha::{CaptchaPayload, PublicProvider};
+use crate::services::sanitize::{normalize_proposed_name, normalize_source};
 use crate::state::AppState;
+
+pub use crate::services::sanitize::normalize_quote_content;
 
 #[derive(Serialize)]
 pub struct PublicCaptcha {
@@ -47,7 +55,7 @@ pub fn public_captcha(settings: &site_settings::Model) -> PublicCaptcha {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct PersonBrief {
     pub id: i64,
     pub name: String,
@@ -79,20 +87,10 @@ pub struct QuotesQuery {
     pub person_id: Option<i64>,
 }
 
-/// Trim, length-check, and reject obvious script tags. Content is stored as raw Markdown.
-pub fn normalize_quote_content(raw: &str) -> AppResult<String> {
-    let content = raw.trim().to_string();
-    if content.is_empty() {
-        return Err(AppError::bad_request("言论内容不能为空"));
-    }
-    if content.chars().count() > 2000 {
-        return Err(AppError::bad_request("言论内容过长"));
-    }
-    let lower = content.to_ascii_lowercase();
-    if lower.contains("<script") {
-        return Err(AppError::bad_request("言论内容包含不允许的标签"));
-    }
-    Ok(content)
+#[derive(Deserialize)]
+pub struct PersonsQuery {
+    pub q: Option<String>,
+    pub limit: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -104,10 +102,16 @@ pub struct SubmissionBody {
     pub captcha: Option<CaptchaPayload>,
 }
 
-pub async fn get_site(State(state): State<AppState>) -> AppResult<Json<SiteResponse>> {
+pub async fn get_site(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    if let Some(cached) = state.cache.get_site() {
+        return Ok(cached_json(&headers, &cached));
+    }
     let settings = ensure_site_settings(&state).await?;
     let captcha = public_captcha(&settings);
-    Ok(Json(SiteResponse {
+    let body = SiteResponse {
         site_name: settings.site_name,
         description: settings.description,
         logo_url: settings.logo_url,
@@ -115,15 +119,39 @@ pub async fn get_site(State(state): State<AppState>) -> AppResult<Json<SiteRespo
         allow_propose_person: settings.allow_propose_person,
         captcha: Some(captcha),
         message: None,
-    }))
+    };
+    let raw = serde_json::to_vec(&body).map_err(|e| AppError::internal(format!("json: {e}")))?;
+    let cached = state
+        .cache
+        .put_site(raw)
+        .ok_or_else(|| AppError::internal("site payload too large"))?;
+    Ok(cached_json(&headers, &cached))
 }
 
-pub async fn list_persons(State(state): State<AppState>) -> AppResult<Json<Vec<PersonBrief>>> {
-    let rows = persons::Entity::find()
-        .order_by_asc(persons::Column::Name)
-        .all(&state.db)
-        .await?;
-    let items = rows
+pub async fn list_persons(
+    State(state): State<AppState>,
+    Query(query): Query<PersonsQuery>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    let q = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+
+    if let Some(cached) = state.cache.get_persons(&q, limit) {
+        return Ok(cached_json(&headers, &cached));
+    }
+
+    let mut finder = persons::Entity::find().order_by_asc(persons::Column::Name);
+    if !q.is_empty() {
+        finder = finder.filter(persons::Column::Name.contains(&q));
+    }
+    let rows = finder.limit(limit).all(&state.db).await?;
+    let items: Vec<PersonBrief> = rows
         .into_iter()
         .map(|p| PersonBrief {
             id: p.id,
@@ -131,20 +159,45 @@ pub async fn list_persons(State(state): State<AppState>) -> AppResult<Json<Vec<P
             avatar_url: AppState::avatar_url(&p.avatar_path),
         })
         .collect();
-    Ok(Json(items))
+    let raw = serde_json::to_vec(&items).map_err(|e| AppError::internal(format!("json: {e}")))?;
+    let cached = match state.cache.put_persons(&q, limit, raw.clone()) {
+        Some(c) => c,
+        None => crate::cache::cached_or_raw(raw),
+    };
+    Ok(cached_json(&headers, &cached))
 }
 
 pub async fn list_quotes(
     State(state): State<AppState>,
     Query(query): Query<QuotesQuery>,
-) -> AppResult<Json<PaginatedQuotes>> {
+    headers: HeaderMap,
+) -> AppResult<Response> {
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
 
+    if let Some(cached) = state.cache.get_quotes(page, page_size, query.person_id) {
+        return Ok(cached_json(&headers, &cached));
+    }
+
+    let payload = load_quotes_page(&state, page, page_size, query.person_id).await?;
+    let raw = serde_json::to_vec(&payload).map_err(|e| AppError::internal(format!("json: {e}")))?;
+    let cached = match state.cache.put_quotes(page, page_size, query.person_id, raw.clone()) {
+        Some(c) => c,
+        None => crate::cache::cached_or_raw(raw),
+    };
+    Ok(cached_json(&headers, &cached))
+}
+
+async fn load_quotes_page(
+    state: &AppState,
+    page: u64,
+    page_size: u64,
+    person_id: Option<i64>,
+) -> AppResult<PaginatedQuotes> {
     let mut finder = quotes::Entity::find()
         .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
         .filter(quotes::Column::PersonId.is_not_null());
-    if let Some(pid) = query.person_id {
+    if let Some(pid) = person_id {
         finder = finder.filter(quotes::Column::PersonId.eq(pid));
     }
     let paginator = finder
@@ -154,53 +207,58 @@ pub async fn list_quotes(
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
 
+    let person_ids: Vec<i64> = rows.iter().filter_map(|q| q.person_id).collect();
+    let people = if person_ids.is_empty() {
+        Vec::new()
+    } else {
+        persons::Entity::find()
+            .filter(persons::Column::Id.is_in(person_ids.clone()))
+            .all(&state.db)
+            .await?
+    };
+    let people_map: HashMap<i64, persons::Model> = people.into_iter().map(|p| (p.id, p)).collect();
+
     let mut items = Vec::with_capacity(rows.len());
     for q in rows {
-        let person_id = q
+        let pid = q
             .person_id
             .ok_or_else(|| AppError::internal("approved quote missing person_id"))?;
-        let person = persons::Entity::find_by_id(person_id)
-            .one(&state.db)
-            .await?
-            .ok_or_else(|| AppError::internal(format!("person {person_id} missing")))?;
+        let person = people_map
+            .get(&pid)
+            .ok_or_else(|| AppError::internal(format!("person {pid} missing")))?;
         items.push(QuoteItem {
             id: q.id,
-            person_id,
+            person_id: pid,
             content: q.content,
             source: q.source,
             created_at: q.created_at,
             person: PersonBrief {
                 id: person.id,
-                name: person.name,
+                name: person.name.clone(),
                 avatar_url: AppState::avatar_url(&person.avatar_path),
             },
         });
     }
 
-    Ok(Json(PaginatedQuotes {
+    Ok(PaginatedQuotes {
         items,
         page,
         page_size,
         total,
-    }))
+    })
 }
 
 pub async fn create_submission(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<SubmissionBody>,
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
-    if !state.rate_limiter.check(addr.ip()) {
-        return Err(AppError::TooManyRequests);
-    }
-
     let content = normalize_quote_content(&body.content)?;
+    let source = normalize_source(body.source)?;
 
     let settings = ensure_site_settings(&state).await?;
-    let source = body
-        .source
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let ip = state.config.client_ip(&headers, addr);
 
     let (person_id, proposed_person_name) = match (
         body.person_id,
@@ -219,10 +277,7 @@ pub async fn create_submission(
             if !settings.allow_propose_person {
                 return Err(AppError::bad_request("当前未开放新神人投稿"));
             }
-            if name.chars().count() > 64 {
-                return Err(AppError::bad_request("神人名称过长"));
-            }
-            (None, Some(name))
+            (None, Some(normalize_proposed_name(&name)?))
         }
         (Some(_), Some(_)) => {
             return Err(AppError::bad_request(
@@ -234,7 +289,12 @@ pub async fn create_submission(
         }
     };
 
-    crate::services::captcha::verify_submission_captcha(&settings, body.captcha.as_ref()).await?;
+    crate::services::captcha::verify_submission_captcha(
+        &settings,
+        body.captcha.as_ref(),
+        Some(ip),
+    )
+    .await?;
 
     let now = Utc::now().fixed_offset();
     let model = quotes::ActiveModel {

@@ -11,6 +11,7 @@ import {
   Typography,
 } from '@mui/material'
 import { adminApi } from '../../api'
+import { ApiError } from '../../api/client'
 import { useToast } from '../../components/AppToast'
 
 export default function SetupPage() {
@@ -31,8 +32,10 @@ export default function SetupPage() {
           setClosed(true)
         }
       })
-      .catch(() => {
-        /* if endpoint fails, still show form — backend may not be up */
+      .catch((err) => {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          setClosed(true)
+        }
       })
       .finally(() => setChecking(false))
   }, [])

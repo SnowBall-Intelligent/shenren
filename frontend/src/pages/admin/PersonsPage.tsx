@@ -238,6 +238,7 @@ function PersonDialog({
             onChange={(e) => setName(e.target.value)}
             fullWidth
             required
+            slotProps={{ htmlInput: { maxLength: 128 } }}
           />
           <Button variant="outlined" component="label">
             {avatar ? avatar.name : person ? '更换头像（可选）' : '上传头像（可选）'}

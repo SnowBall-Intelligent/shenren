@@ -3,6 +3,7 @@ pub use sea_orm_migration::prelude::*;
 mod m20240818_000001_init;
 mod m20260821_000001_captcha;
 mod m20260821_000002_captcha_providers;
+mod m20260821_000003_quote_indexes;
 
 pub struct Migrator;
 
@@ -13,6 +14,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240818_000001_init::Migration),
             Box::new(m20260821_000001_captcha::Migration),
             Box::new(m20260821_000002_captcha_providers::Migration),
+            Box::new(m20260821_000003_quote_indexes::Migration),
         ]
     }
 }

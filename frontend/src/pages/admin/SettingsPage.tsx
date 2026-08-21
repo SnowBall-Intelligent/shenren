@@ -70,6 +70,7 @@ export default function SettingsPage() {
           required
           value={form.site_name}
           onChange={(e) => setForm({ ...form, site_name: e.target.value })}
+          slotProps={{ htmlInput: { maxLength: 128 } }}
         />
         <TextField
           label="简介"
@@ -77,17 +78,19 @@ export default function SettingsPage() {
           minRows={2}
           value={form.description ?? ''}
           onChange={(e) => setForm({ ...form, description: e.target.value || null })}
+          slotProps={{ htmlInput: { maxLength: 2000 } }}
         />
         <TextField
           label="Logo URL"
           value={form.logo_url ?? ''}
           onChange={(e) => setForm({ ...form, logo_url: e.target.value || null })}
-          helperText="可为 /uploads/... 或完整 URL"
+          helperText="须为 http:// 或 https:// 开头的完整 URL"
         />
         <TextField
           label="页脚"
           value={form.footer ?? ''}
           onChange={(e) => setForm({ ...form, footer: e.target.value || null })}
+          slotProps={{ htmlInput: { maxLength: 2000 } }}
         />
         <FormControlLabel
           control={

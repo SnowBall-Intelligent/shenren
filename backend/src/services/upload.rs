@@ -7,7 +7,6 @@ use crate::error::{AppError, AppResult};
 
 const MAX_AVATAR_BYTES: usize = 5 * 1024 * 1024;
 const MAX_AVATAR_URL_LEN: usize = 2048;
-const ALLOWED_EXT: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 const LETTER_PALETTE: [&str; 8] = [
     "#5c6bc0", "#26a69a", "#ef5350", "#ab47bc", "#42a5f5", "#66bb6a", "#ffa726", "#8d6e63",
 ];
@@ -30,7 +29,7 @@ pub struct ApproveMultipart {
 pub async fn save_avatar_from_multipart_field(
     uploads_dir: &Path,
     field_name: &str,
-    field_filename: Option<&str>,
+    _field_filename: Option<&str>,
     data: &[u8],
 ) -> AppResult<String> {
     if data.is_empty() {
@@ -40,18 +39,30 @@ pub async fn save_avatar_from_multipart_field(
         return Err(AppError::bad_request("头像文件过大（最大 5MB）"));
     }
 
-    let ext = field_filename
-        .and_then(|name| Path::new(name).extension())
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .filter(|e| ALLOWED_EXT.contains(&e.as_str()))
-        .ok_or_else(|| AppError::bad_request("仅支持 jpg/png/gif/webp 头像"))?;
+    let ext = sniff_image_ext(data)
+        .ok_or_else(|| AppError::bad_request("头像不是有效的 jpg/png/gif/webp 文件"))?;
 
     std::fs::create_dir_all(uploads_dir)?;
     let filename = format!("{}.{}", Uuid::new_v4(), ext);
     let full_path = uploads_dir.join(&filename);
     tokio::fs::write(&full_path, data).await?;
     Ok(filename)
+}
+
+fn sniff_image_ext(data: &[u8]) -> Option<&'static str> {
+    if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+        return Some("jpg");
+    }
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("png");
+    }
+    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    None
 }
 
 pub fn name_initial(name: &str) -> char {

@@ -153,6 +153,7 @@ export default function QuoteCreateDialog({
             value={source}
             onChange={(e) => setSource(e.target.value)}
             fullWidth
+            slotProps={{ htmlInput: { maxLength: 500 } }}
           />
         </Box>
       </DialogContent>

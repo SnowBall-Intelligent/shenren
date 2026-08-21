@@ -163,6 +163,7 @@ pub fn normalize_provider_list(
 pub async fn verify_submission_captcha(
     settings: &site_settings::Model,
     payload: Option<&CaptchaPayload>,
+    remote_ip: Option<std::net::IpAddr>,
 ) -> AppResult<()> {
     let chain = parse_providers(settings);
     if chain.is_empty() {
@@ -188,19 +189,27 @@ pub async fn verify_submission_captcha(
         return Err(AppError::bad_request("请先完成人机验证"));
     };
 
-    verify_one(&cfg, payload).await
+    verify_one(&cfg, payload, remote_ip).await
 }
 
-async fn verify_one(cfg: &CaptchaProviderConfig, payload: &CaptchaPayload) -> AppResult<()> {
+async fn verify_one(
+    cfg: &CaptchaProviderConfig,
+    payload: &CaptchaPayload,
+    remote_ip: Option<std::net::IpAddr>,
+) -> AppResult<()> {
     match cfg.provider.as_str() {
-        "turnstile" => verify_turnstile(&cfg.secret, payload).await,
-        "recaptcha" => verify_recaptcha(&cfg.secret, payload).await,
+        "turnstile" => verify_turnstile(&cfg.secret, payload, remote_ip).await,
+        "recaptcha" => verify_recaptcha(&cfg.secret, payload, remote_ip).await,
         "geetest" => verify_geetest(&cfg.site_key, &cfg.secret, payload).await,
         other => Err(AppError::bad_request(format!("未知的人机验证类型: {other}"))),
     }
 }
 
-async fn verify_turnstile(secret: &str, payload: &CaptchaPayload) -> AppResult<()> {
+async fn verify_turnstile(
+    secret: &str,
+    payload: &CaptchaPayload,
+    remote_ip: Option<std::net::IpAddr>,
+) -> AppResult<()> {
     let token = payload
         .token
         .as_deref()
@@ -209,9 +218,14 @@ async fn verify_turnstile(secret: &str, payload: &CaptchaPayload) -> AppResult<(
         .ok_or_else(|| AppError::bad_request("请先完成人机验证"))?;
 
     let client = http_client()?;
+    let ip = remote_ip.map(|ip| ip.to_string());
+    let mut form = vec![("secret", secret), ("response", token)];
+    if let Some(ref ip) = ip {
+        form.push(("remoteip", ip.as_str()));
+    }
     let res = client
         .post("https://challenges.cloudflare.com/turnstile/v0/siteverify")
-        .form(&[("secret", secret), ("response", token)])
+        .form(&form)
         .send()
         .await
         .map_err(|e| {
@@ -229,7 +243,11 @@ async fn verify_turnstile(secret: &str, payload: &CaptchaPayload) -> AppResult<(
     }
 }
 
-async fn verify_recaptcha(secret: &str, payload: &CaptchaPayload) -> AppResult<()> {
+async fn verify_recaptcha(
+    secret: &str,
+    payload: &CaptchaPayload,
+    remote_ip: Option<std::net::IpAddr>,
+) -> AppResult<()> {
     let token = payload
         .token
         .as_deref()
@@ -238,9 +256,14 @@ async fn verify_recaptcha(secret: &str, payload: &CaptchaPayload) -> AppResult<(
         .ok_or_else(|| AppError::bad_request("请先完成人机验证"))?;
 
     let client = http_client()?;
+    let ip = remote_ip.map(|ip| ip.to_string());
+    let mut form = vec![("secret", secret), ("response", token)];
+    if let Some(ref ip) = ip {
+        form.push(("remoteip", ip.as_str()));
+    }
     let res = client
         .post("https://www.recaptcha.net/recaptcha/api/siteverify")
-        .form(&[("secret", secret), ("response", token)])
+        .form(&form)
         .send()
         .await
         .map_err(|e| {

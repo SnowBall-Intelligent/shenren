@@ -1,3 +1,4 @@
+mod cache;
 mod config;
 mod entities;
 mod error;
@@ -9,12 +10,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectOptions, Database};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
+use crate::cache::PublicReadCache;
 use crate::config::Config;
-use crate::services::rate_limit::RateLimiter;
+use crate::services::auth::hash_password;
+use crate::services::rate_limit::RateLimiters;
 use crate::state::AppState;
 
 #[tokio::main]
@@ -24,14 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,tower_http=info,sea_orm=info")),
+                .unwrap_or_else(|_| EnvFilter::new("warn,tower_http=warn,sea_orm=warn")),
         )
         .init();
 
-    let config = Config::from_env();
+    let config = Config::from_env().map_err(|e| {
+        tracing::error!("{e}");
+        e
+    })?;
     std::fs::create_dir_all(&config.uploads_dir)?;
 
-    // Ensure SQLite parent directory exists.
     if let Some(path) = sqlite_path_from_url(&config.database_url) {
         if let Some(parent) = std::path::Path::new(&path).parent() {
             std::fs::create_dir_all(parent)?;
@@ -39,21 +44,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut opt = ConnectOptions::new(config.database_url.clone());
-    opt.max_connections(10)
+    opt.max_connections(config.db_max_connections)
         .min_connections(1)
         .connect_timeout(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_secs(3))
         .sqlx_logging(false);
 
     tracing::info!("connecting database...");
     let db = Database::connect(opt).await?;
+    if config.database_url.starts_with("sqlite:") {
+        db.execute_unprepared("PRAGMA journal_mode=WAL;").await?;
+        db.execute_unprepared("PRAGMA busy_timeout=5000;").await?;
+        db.execute_unprepared("PRAGMA synchronous=NORMAL;").await?;
+    }
     Migrator::up(&db, None).await?;
     tracing::info!("migrations applied");
+
+    let dummy_password_hash = hash_password("!unused-timing-pad!")?;
+    let rate_limiters = RateLimiters::new(
+        config.rate_limit_home,
+        config.rate_limit_submit,
+        config.rate_limit_login,
+        config.rate_limit_admin,
+        config.rate_limit_uploads,
+    );
 
     let state = AppState {
         db,
         config: Arc::new(config.clone()),
-        // 10 submissions / 10 minutes per IP
-        rate_limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(10 * 60))),
+        rate_limiters: Arc::new(rate_limiters),
+        cache: Arc::new(PublicReadCache::new()),
+        dummy_password_hash: dummy_password_hash.into(),
     };
 
     let app = routes::app_router(state, &config);

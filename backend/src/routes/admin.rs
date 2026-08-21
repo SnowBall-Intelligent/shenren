@@ -13,6 +13,9 @@ use crate::error::{AppError, AppResult};
 use crate::routes::public::{
     ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
 };
+use crate::services::sanitize::{
+    normalize_person_name, normalize_site_name, normalize_site_text, normalize_source,
+};
 use crate::services::auth::{
     admin_count, find_admin_by_username, hash_password, require_admin, verify_password,
     SESSION_ADMIN_ID,
@@ -131,9 +134,12 @@ fn validate_credentials(username: &str, password: &str) -> AppResult<(String, St
 
 pub async fn bootstrap_status(State(state): State<AppState>) -> AppResult<Json<BootstrapStatus>> {
     let count = admin_count(&state.db).await?;
+    if count > 0 {
+        return Err(AppError::unauthorized("未登录"));
+    }
     Ok(Json(BootstrapStatus {
-        needs_setup: count == 0,
-        has_admins: count > 0,
+        needs_setup: true,
+        has_admins: false,
     }))
 }
 
@@ -162,6 +168,7 @@ pub async fn setup(
     // Ensure default site settings exist after first admin.
     let _ = ensure_site_settings(&state).await?;
 
+    session.cycle_id().await?;
     session.insert(SESSION_ADMIN_ID, admin.id).await?;
 
     Ok((
@@ -176,13 +183,18 @@ pub async fn login(
     Json(body): Json<LoginBody>,
 ) -> AppResult<Json<AdminInfo>> {
     let username = body.username.trim();
-    let admin = find_admin_by_username(&state.db, username)
-        .await?
-        .ok_or_else(|| AppError::unauthorized("用户名或密码错误"))?;
-
-    if !verify_password(&body.password, &admin.password_hash)? {
-        return Err(AppError::unauthorized("用户名或密码错误"));
-    }
+    let admin = find_admin_by_username(&state.db, username).await?;
+    let password_ok = match &admin {
+        Some(admin) => verify_password(&body.password, &admin.password_hash)?,
+        None => {
+            let _ = verify_password(&body.password, &state.dummy_password_hash);
+            false
+        }
+    };
+    let admin = match (admin, password_ok) {
+        (Some(admin), true) => admin,
+        _ => return Err(AppError::unauthorized("用户名或密码错误")),
+    };
 
     session.cycle_id().await?;
     session.insert(SESSION_ADMIN_ID, admin.id).await?;
@@ -298,27 +310,22 @@ pub async fn update_settings(
     let _ = require_admin(&session, &state.db).await?;
     let settings = ensure_site_settings(&state).await?;
 
-    let site_name = body.site_name.trim().to_string();
-    if site_name.is_empty() {
-        return Err(AppError::bad_request("站点名称不能为空"));
-    }
+    let site_name = normalize_site_name(&body.site_name)?;
+    let description = normalize_site_text(body.description)?;
+    let footer = normalize_site_text(body.footer)?;
+    let logo_url = match body.logo_url {
+        Some(raw) => parse_avatar_url(&raw)?,
+        None => None,
+    };
 
     let mut am: site_settings::ActiveModel = settings.into();
     am.site_name = Set(site_name);
-    am.description = Set(body
-        .description
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty()));
-    am.logo_url = Set(body
-        .logo_url
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty()));
-    am.footer = Set(body
-        .footer
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty()));
+    am.description = Set(description);
+    am.logo_url = Set(logo_url);
+    am.footer = Set(footer);
     am.allow_propose_person = Set(body.allow_propose_person);
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_site();
 
     Ok(Json(SiteResponse {
         site_name: updated.site_name,
@@ -408,6 +415,7 @@ pub async fn update_captcha(
     am.captcha_site_key = Set(legacy_site_key);
     am.captcha_secret = Set(legacy_secret);
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_site();
 
     Ok(Json(captcha_settings_response(&updated, Some("已保存"))))
 }
@@ -461,16 +469,19 @@ async fn insert_person(
     avatar: Option<AvatarFile>,
     avatar_url: Option<String>,
 ) -> AppResult<persons::Model> {
+    let name = normalize_person_name(&name)?;
     let avatar_path = resolve_new_avatar(state.uploads_dir(), &name, avatar, avatar_url).await?;
     let now = Utc::now().fixed_offset();
-    Ok(persons::ActiveModel {
+    let person = persons::ActiveModel {
         name: Set(name),
         avatar_path: Set(avatar_path),
         created_at: Set(now),
         ..Default::default()
     }
     .insert(&state.db)
-    .await?)
+    .await?;
+    state.cache.bust_public();
+    Ok(person)
 }
 
 pub async fn create_person(
@@ -506,29 +517,31 @@ pub async fn update_person(
         .ok_or_else(|| AppError::not_found("神人不存在"))?;
 
     let parsed = parse_person_multipart(multipart).await?;
+    let name = normalize_person_name(&parsed.name)?;
     let old_name = person.name.clone();
     let old_avatar = person.avatar_path.clone();
     let mut am: persons::ActiveModel = person.into();
-    am.name = Set(parsed.name.clone());
+    am.name = Set(name.clone());
 
     if parsed.avatar.is_some() || parsed.avatar_url.is_some() {
         let avatar_path = resolve_new_avatar(
             state.uploads_dir(),
-            &parsed.name,
+            &name,
             parsed.avatar,
             parsed.avatar_url,
         )
         .await?;
         am.avatar_path = Set(avatar_path);
         delete_avatar_file(state.uploads_dir(), &old_avatar);
-    } else if is_letter_avatar(&old_avatar) && name_initial(&parsed.name) != name_initial(&old_name)
+    } else if is_letter_avatar(&old_avatar) && name_initial(&name) != name_initial(&old_name)
     {
-        let avatar_path = generate_letter_avatar(state.uploads_dir(), &parsed.name).await?;
+        let avatar_path = generate_letter_avatar(state.uploads_dir(), &name).await?;
         am.avatar_path = Set(avatar_path);
         delete_avatar_file(state.uploads_dir(), &old_avatar);
     }
 
     let updated = am.update(&state.db).await?;
+    state.cache.bust_public();
     Ok(Json(PersonAdminItem {
         id: updated.id,
         name: updated.name,
@@ -563,6 +576,7 @@ pub async fn delete_person(
     let am: persons::ActiveModel = person.into();
     am.delete(&state.db).await?;
     delete_avatar_file(state.uploads_dir(), &avatar_path);
+    state.cache.bust_public();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -587,10 +601,7 @@ pub async fn create_quote(
         .await?
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
 
-    let source = body
-        .source
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let source = normalize_source(body.source)?;
 
     let now = Utc::now().fixed_offset();
     let inserted = quotes::ActiveModel {
@@ -606,6 +617,7 @@ pub async fn create_quote(
     }
     .insert(&state.db)
     .await?;
+    state.cache.invalidate_quotes();
 
     Ok((
         StatusCode::CREATED,
@@ -646,10 +658,7 @@ pub async fn update_quote(
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
-    let source = body
-        .source
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let source = normalize_source(body.source)?;
 
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(Some(person.id));
@@ -657,6 +666,7 @@ pub async fn update_quote(
     am.content = Set(content);
     am.source = Set(source);
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_quotes();
 
     Ok(Json(AdminQuoteItem {
         id: updated.id,
@@ -688,6 +698,7 @@ pub async fn delete_quote(
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
     quotes::Entity::delete_by_id(quote.id).exec(&state.db).await?;
+    state.cache.invalidate_quotes();
     Ok(Json(serde_json::json!({ "message": "语录已删除" })))
 }
 
@@ -820,6 +831,7 @@ pub async fn approve_quote(
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
         persons::Entity::find_by_id(pid)
@@ -914,6 +926,7 @@ pub async fn approve_quote_json(
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
         persons::Entity::find_by_id(pid)
@@ -964,6 +977,7 @@ pub async fn reject_quote(
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
+    state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
         persons::Entity::find_by_id(pid)

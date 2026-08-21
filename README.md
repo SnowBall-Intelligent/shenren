@@ -70,11 +70,21 @@ watchexec -e rs,toml -r cargo run
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `DATABASE_URL` | `sqlite://data/shenren.db?mode=rwc` | SQLite 或 MySQL |
-| `BIND_ADDR` | `127.0.0.1:3000` | 监听地址 |
-| `UPLOADS_DIR` | `uploads` | 头像目录（相对 backend cwd） |
-| `COOKIE_SECURE` | `false` | 生产 HTTPS 设为 `true` |
+| `DATABASE_MAX_CONNECTIONS` | MySQL `32` / SQLite `8` | 连接池上限 |
+| `BIND_ADDR` | `127.0.0.1:3000` | 监听地址。非 loopback 时 Cookie 默认 `Secure` |
+| `UPLOADS_DIR` | `uploads` | 头像目录（相对 backend cwd；不能是 `/` 或盘符根） |
+| `COOKIE_SECURE` | 随监听地址 | 显式 `true`/`false` 可覆盖；非 127.0.0.1/`::1` 默认 `true` |
 | `COOKIE_SAMESITE` | `Lax` | `Lax` / `Strict` / `None`（跨站前端用 `None`，且须 HTTPS） |
+| `SESSION_TTL_SECS` | `43200` | 管理端会话空闲过期（秒） |
 | `CORS_ORIGINS` | （空） | 额外允许的前端 Origin，逗号分隔。`http://localhost:*` 与 `http://127.0.0.1:*` 始终允许 |
+| `REQUEST_TIMEOUT_SECS` | `15` | 请求超时 |
+| `MAX_CONCURRENCY` | `256` | 同时处理的请求上限 |
+| `RATE_LIMIT_TRUST_PROXY` | `false` | `true` 时用 `CF-Connecting-IP` 或 `X-Forwarded-For` 最左一跳 |
+| `RATE_LIMIT_HOME` / `_WINDOW` | `120` / `60` | 公开 GET `/api/site`、`/quotes`、`/persons` |
+| `RATE_LIMIT_SUBMIT` / `_WINDOW` | `10` / `600` | `POST /api/submissions` |
+| `RATE_LIMIT_LOGIN` / `_WINDOW` | `5` / `60` | `POST /api/admin/login`、`/setup` |
+| `RATE_LIMIT_ADMIN` / `_WINDOW` | `120` / `60` | 其余 `/api/admin/*` |
+| `RATE_LIMIT_UPLOADS` / `_WINDOW` | `240` / `60` | `GET /uploads/*` |
 
 ## 前后端一起开发
 

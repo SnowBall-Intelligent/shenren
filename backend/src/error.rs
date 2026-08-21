@@ -17,7 +17,7 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
     #[error("too many requests")]
-    TooManyRequests,
+    TooManyRequests { retry_after: u64 },
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
@@ -68,10 +68,20 @@ impl IntoResponse for AppError {
             AppError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
-            AppError::TooManyRequests => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "投稿过于频繁，请稍后再试".to_string(),
-            ),
+            AppError::TooManyRequests { retry_after } => {
+                let secs = (*retry_after).max(1);
+                let retry = axum::http::HeaderValue::from_str(&secs.to_string())
+                    .unwrap_or_else(|_| axum::http::HeaderValue::from_static("1"));
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, retry)],
+                    Json(json!({
+                        "message": "请求过于频繁，请稍后再试",
+                        "error": "请求过于频繁，请稍后再试"
+                    })),
+                )
+                    .into_response();
+            }
             AppError::Db(e) => {
                 tracing::error!("database error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "数据库错误".to_string())
@@ -89,7 +99,10 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(m) => {
                 tracing::error!("internal error: {m}");
-                (StatusCode::INTERNAL_SERVER_ERROR, m.clone())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "服务器错误".to_string(),
+                )
             }
             AppError::CaptchaFailed(m) => (StatusCode::BAD_REQUEST, m.clone()),
         };

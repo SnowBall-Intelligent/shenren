@@ -20,7 +20,6 @@ export default function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from ?? '/admin/quotes/review'
 
   const [checking, setChecking] = useState(true)
-  const [needsSetup, setNeedsSetup] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -28,17 +27,6 @@ export default function LoginPage() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      try {
-        const status = await adminApi.bootstrapStatus()
-        if (cancelled) return
-        if (status.needs_setup) {
-          setNeedsSetup(true)
-          setChecking(false)
-          return
-        }
-      } catch {
-        /* continue to login form */
-      }
       try {
         await adminApi.me()
         if (!cancelled) navigate(from, { replace: true })
@@ -75,10 +63,6 @@ export default function LoginPage() {
     )
   }
 
-  if (needsSetup) {
-    return <NavigateSetup />
-  }
-
   return (
     <Box sx={{ maxWidth: 420, mx: 'auto', mt: 8, px: 2 }}>
       <Paper sx={{ p: 3 }}>
@@ -106,23 +90,15 @@ export default function LoginPage() {
           </Button>
         </Stack>
         <Box sx={{ mt: 2, textAlign: 'center' }}>
+          <Link component={RouterLink} to="/admin/setup" underline="hover" variant="body2" color="text.secondary">
+            首次安装
+          </Link>
+          {' · '}
           <Link component={RouterLink} to="/" underline="hover" variant="body2" color="text.secondary">
             返回首页
           </Link>
         </Box>
       </Paper>
-    </Box>
-  )
-}
-
-function NavigateSetup() {
-  const navigate = useNavigate()
-  useEffect(() => {
-    navigate('/admin/setup', { replace: true })
-  }, [navigate])
-  return (
-    <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}>
-      <CircularProgress />
     </Box>
   )
 }

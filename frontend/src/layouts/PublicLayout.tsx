@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link as RouterLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   AppBar,
@@ -13,7 +13,8 @@ import {
 import { publicApi } from '../api'
 import type { SiteInfo } from '../api/types'
 import { uploadUrl } from '../api/client'
-import SubmitDialog from '../components/SubmitDialog'
+
+const SubmitDialog = lazy(() => import('../components/SubmitDialog'))
 
 export default function PublicLayout() {
   const location = useLocation()
@@ -105,7 +106,11 @@ export default function PublicLayout() {
         <Outlet context={{ site }} />
       </Container>
 
-      <SubmitDialog open={submitOpen} onClose={() => setSubmitOpen(false)} site={site} />
+      {submitOpen ? (
+        <Suspense fallback={null}>
+          <SubmitDialog open={submitOpen} onClose={() => setSubmitOpen(false)} site={site} />
+        </Suspense>
+      ) : null}
 
       <Box component="footer" sx={{ py: 2, textAlign: 'center', color: 'text.secondary', fontSize: 13 }}>
         {site?.footer ? (
