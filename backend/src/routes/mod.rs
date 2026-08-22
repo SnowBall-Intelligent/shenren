@@ -138,10 +138,12 @@ fn admin_routes() -> Router<AppState> {
             "/quotes",
             get(admin::list_quotes_admin).post(admin::create_quote),
         )
+        .route("/quotes/reorder", post(admin::reorder_quotes))
         .route(
             "/quotes/{id}",
             put(admin::update_quote).delete(admin::delete_quote),
         )
+        .route("/quotes/{id}/move", post(admin::move_quote))
         .route("/quotes/{id}/approve", post(admin::approve_quote))
         .route("/quotes/{id}/approve-json", post(admin::approve_quote_json))
         .route("/quotes/{id}/reject", post(admin::reject_quote))

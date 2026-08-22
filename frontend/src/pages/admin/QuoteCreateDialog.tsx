@@ -9,12 +9,15 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
+  Switch,
   TextField,
 } from '@mui/material'
 import { adminApi } from '../../api'
 import type { Person, Quote } from '../../api/types'
 import { nameInitial, uploadUrl } from '../../api/client'
 import QuoteMarkdownEditor from '../../components/QuoteMarkdownEditor'
+import QuotePlaceFields, { fromDatetimeLocal, toDatetimeLocal } from '../../components/QuotePlaceFields'
 import { useToast } from '../../components/AppToast'
 
 export default function QuoteCreateDialog({
@@ -38,6 +41,10 @@ export default function QuoteCreateDialog({
   const [selected, setSelected] = useState<Person | null>(null)
   const [content, setContent] = useState('')
   const [source, setSource] = useState('')
+  const [pinned, setPinned] = useState(false)
+  const [publishedAt, setPublishedAt] = useState('')
+  const [anchor, setAnchor] = useState<Quote | null>(null)
+  const [place, setPlace] = useState<'before' | 'after'>('before')
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -57,6 +64,10 @@ export default function QuoteCreateDialog({
       setSelected(person ?? fromQuote)
       setContent(quote?.content ?? '')
       setSource(quote?.source ?? '')
+      setPinned(quote?.pinned ?? false)
+      setPublishedAt(toDatetimeLocal(quote?.published_at ?? quote?.created_at))
+      setAnchor(null)
+      setPlace('before')
       setFormError(null)
     }
   }, [open, person, quote, persons])
@@ -71,6 +82,11 @@ export default function QuoteCreateDialog({
       setFormError('请填写语录内容')
       return
     }
+    const published = fromDatetimeLocal(publishedAt)
+    if (publishedAt && !published) {
+      setFormError('发布时间无效')
+      return
+    }
     setBusy(true)
     setFormError(null)
     try {
@@ -78,6 +94,10 @@ export default function QuoteCreateDialog({
         person_id: selected.id,
         content: trimmed,
         source: source.trim() || null,
+        pinned,
+        published_at: published,
+        place_before_id: anchor && place === 'before' ? anchor.id : null,
+        place_after_id: anchor && place === 'after' ? anchor.id : null,
       }
       const data = editing
         ? await adminApi.updateQuote(quote.id, payload)
@@ -154,6 +174,36 @@ export default function QuoteCreateDialog({
             onChange={(e) => setSource(e.target.value)}
             fullWidth
             slotProps={{ htmlInput: { maxLength: 500 } }}
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={pinned}
+                onChange={(e) => {
+                  setPinned(e.target.checked)
+                  setAnchor(null)
+                }}
+              />
+            }
+            label="置顶（单独排在首页最前一组）"
+          />
+          <QuotePlaceFields
+            source="admin"
+            enabled={open}
+            excludeId={quote?.id}
+            pinnedOnly={pinned}
+            anchor={anchor}
+            onAnchorChange={setAnchor}
+            place={place}
+            onPlaceChange={setPlace}
+            publishedAt={publishedAt}
+            onPublishedAtChange={setPublishedAt}
+            keepOrderHint={
+              editing
+                ? '默认最近 10 条，可搜索神人或内容。不选则保持现在的前后关系。'
+                : '默认最近 10 条，可搜索神人或内容。不选则按发布时间排。'
+            }
+            publishedHint="可填过去或未来；未来时间也会立刻出现在首页。"
           />
         </Box>
       </DialogContent>

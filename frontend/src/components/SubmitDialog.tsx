@@ -16,8 +16,9 @@ import {
   Typography,
 } from '@mui/material'
 import { normalizePersons, publicApi } from '../api'
-import type { CaptchaPayload, Person, SiteInfo } from '../api/types'
+import type { CaptchaPayload, Person, Quote, SiteInfo } from '../api/types'
 import QuoteMarkdownEditor from './QuoteMarkdownEditor'
+import QuotePlaceFields, { fromDatetimeLocal, toDatetimeLocal } from './QuotePlaceFields'
 import CaptchaWidget, { publicCaptchaList } from './CaptchaWidget'
 import { useToast } from './AppToast'
 import { ApiError, nameInitial, uploadUrl } from '../api/client'
@@ -44,6 +45,9 @@ export default function SubmitDialog({
   const [proposedName, setProposedName] = useState('')
   const [content, setContent] = useState('')
   const [source, setSource] = useState('')
+  const [anchor, setAnchor] = useState<Quote | null>(null)
+  const [place, setPlace] = useState<'before' | 'after'>('before')
+  const [publishedAt, setPublishedAt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [captcha, setCaptcha] = useState<CaptchaPayload | null>(null)
   const [captchaKey, setCaptchaKey] = useState(0)
@@ -65,12 +69,14 @@ export default function SubmitDialog({
   }
 
   useEffect(() => {
-    if (!open) {
-      setCaptcha(null)
-      setSkipSignal(0)
-      setPersonQuery('')
-      setPerson(null)
-    }
+    if (open) return
+    setCaptcha(null)
+    setSkipSignal(0)
+    setPersonQuery('')
+    setPerson(null)
+    setAnchor(null)
+    setPlace('before')
+    setPublishedAt(toDatetimeLocal())
   }, [open])
 
   useEffect(() => {
@@ -112,6 +118,11 @@ export default function SubmitDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit) return
+    const published = fromDatetimeLocal(publishedAt)
+    if (publishedAt && !published) {
+      toast.error('发布时间无效')
+      return
+    }
     setSubmitting(true)
     try {
       const data = await publicApi.submit({
@@ -119,6 +130,9 @@ export default function SubmitDialog({
         proposed_person_name: mode === 'propose' ? proposedName.trim() : null,
         content: content.trim(),
         source: source.trim() || null,
+        published_at: published,
+        place_before_id: anchor && place === 'before' ? anchor.id : null,
+        place_after_id: anchor && place === 'after' ? anchor.id : null,
         captcha: captcha ?? undefined,
       })
       toast.fromSuccess(data)
@@ -230,6 +244,19 @@ export default function SubmitDialog({
               value={source}
               onChange={(e) => setSource(e.target.value)}
               slotProps={{ htmlInput: { maxLength: 500 } }}
+            />
+
+            <QuotePlaceFields
+              source="public"
+              enabled={open}
+              pinnedOnly={false}
+              anchor={anchor}
+              onAnchorChange={setAnchor}
+              place={place}
+              onPlaceChange={setPlace}
+              publishedAt={publishedAt}
+              onPublishedAtChange={setPublishedAt}
+              keepOrderHint="默认最近 10 条，可搜索神人或内容。不选则按发布时间排。"
             />
 
             {open && captchaRequired ? (

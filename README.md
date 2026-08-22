@@ -98,8 +98,18 @@ cargo install watchexec-cli   # 若尚未安装
 npm run dev
 ```
 
-- 前台：`npm --prefix frontend run dev`（Vite HMR；`/api` 与 `/uploads` 已 proxy 到 `127.0.0.1:3000`）
+- 前台：`npm --prefix frontend run dev`（`VITE_API_URL` 为空时，`/api` 与 `/uploads` proxy 到 `127.0.0.1:3000`）
 - 后台：`watchexec -e rs,toml -r --cwd backend cargo run`（只提供 API，不返回 HTML）
+
+### 前端环境变量
+
+Vite 会在**构建时**写入 `VITE_*`（Cloudflare Pages 在项目环境变量里设置即可覆盖）。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `VITE_API_URL` | 开发为空；生产 `https://api.shenren.de5.net` | API 源站，不要带路径。空 = 同源（走 Vite proxy）。末尾 `/` 可有可无 |
+
+本地覆盖：复制 `frontend/.env.example` 为 `frontend/.env.development.local`，不要提交。
 
 ## 生产
 
@@ -107,18 +117,22 @@ npm run dev
 cd backend
 $env:DATABASE_URL = "mysql://user:pass@host:3306/shenren"
 $env:COOKIE_SECURE = "true"
-$env:CORS_ORIGINS = "https://your.frontend.example"
+$env:COOKIE_SAMESITE = "None"
+$env:CORS_ORIGINS = "https://your.pages.example"
 cargo run --release
 ```
 
-前台单独 `npm --prefix frontend run build` 后交给静态托管，不要再塞进 Axum。
+前台：`npm --prefix frontend run build`（读取 `frontend/.env.production` 的 `VITE_API_URL`），产物交给 Nginx / Cloudflare Pages，不要再塞进 Axum。
+
+Pages 构建示例：根目录，输出 `frontend/dist`，命令 `npm --prefix frontend ci && npm --prefix frontend run build`。项目环境变量设 `VITE_API_URL=https://api.shenren.de5.net` 可覆盖文件默认值。前后端不同源时，后端必须把 Pages Origin 写进 `CORS_ORIGINS`，并设 `COOKIE_SAMESITE=None`（管理端 Cookie 才能跨站带上）。
 
 或 Docker（API 镜像，默认连宿主机 MySQL）：
 
 ```bash
 export DATABASE_URL=mysql://user:pass@host.docker.internal:3306/shenren
 export COOKIE_SECURE=true
-export CORS_ORIGINS=https://your.frontend.example
+export COOKIE_SAMESITE=None
+export CORS_ORIGINS=https://your.pages.example
 docker compose up -d --build
 ```
 

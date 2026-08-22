@@ -1,0 +1,4 @@
+# Cloudflare Pages: a top-level 404.html turns off SPA mode and makes
+# /admin/* refresh return 404. Do not add 404.html. This rewrite is
+# explicit; Pages also falls back to / when 404.html is absent.
+/*    /index.html   200

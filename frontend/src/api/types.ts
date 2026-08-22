@@ -64,11 +64,25 @@ export interface Quote {
   content: string
   source: string | null
   status?: 'pending' | 'approved' | 'rejected'
+  pinned?: boolean
+  sort_order?: number
+  published_at?: string
   created_at: string
   reviewed_at?: string | null
   reviewed_by?: number | null
   person: QuotePerson | null
   message?: string
+}
+
+export interface QuoteWrite {
+  person_id: number
+  content: string
+  source?: string | null
+  pinned?: boolean
+  sort_order?: number
+  published_at?: string | null
+  place_before_id?: number | null
+  place_after_id?: number | null
 }
 
 export interface Paginated<T> {
@@ -83,6 +97,9 @@ export interface SubmissionPayload {
   proposed_person_name?: string | null
   content: string
   source?: string | null
+  published_at?: string | null
+  place_before_id?: number | null
+  place_after_id?: number | null
   captcha?: CaptchaPayload
 }
 

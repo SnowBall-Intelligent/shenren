@@ -1,5 +1,20 @@
 import type { ApiErrorBody } from './types'
 
+/** API origin without trailing slash. Empty = same-origin (Vite `/api` proxy in dev). */
+export function apiBase(): string {
+  const raw = import.meta.env.VITE_API_URL
+  if (typeof raw !== 'string') return ''
+  return raw.trim().replace(/\/+$/, '')
+}
+
+/** Resolve `/api/...` or `/uploads/...` against `VITE_API_URL`. */
+export function apiUrl(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  const base = apiBase()
+  const p = path.startsWith('/') ? path : `/${path}`
+  return base ? `${base}${p}` : p
+}
+
 export class ApiError extends Error {
   status: number
   body: ApiErrorBody | null
@@ -27,7 +42,7 @@ type JsonOptions = Omit<RequestInit, 'body'> & { body?: unknown }
 
 export async function apiJson<T>(path: string, options: JsonOptions = {}): Promise<T> {
   const { body, headers, ...rest } = options
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     credentials: 'include',
     headers: {
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
@@ -50,7 +65,7 @@ export async function apiJson<T>(path: string, options: JsonOptions = {}): Promi
 }
 
 export async function apiForm<T>(path: string, form: FormData, method: string = 'POST'): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     method,
     credentials: 'include',
     body: form,
@@ -71,10 +86,9 @@ export async function apiForm<T>(path: string, form: FormData, method: string = 
 /** Resolve avatar/upload paths for <img src>. */
 export function uploadUrl(path: string | null | undefined): string | undefined {
   if (!path) return undefined
-  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
-    return path
-  }
-  return `/uploads/${path.replace(/^\.?\/?uploads\//, '')}`
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  if (path.startsWith('/')) return apiUrl(path)
+  return apiUrl(`/uploads/${path.replace(/^\.?\/?uploads\//, '')}`)
 }
 
 /** First visible character for letter avatars (Unicode-aware). */

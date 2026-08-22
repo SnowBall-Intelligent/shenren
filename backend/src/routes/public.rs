@@ -5,7 +5,7 @@ use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     Set,
@@ -68,6 +68,9 @@ pub struct QuoteItem {
     pub person_id: i64,
     pub content: String,
     pub source: Option<String>,
+    pub pinned: bool,
+    pub sort_order: i32,
+    pub published_at: chrono::DateTime<chrono::FixedOffset>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub person: PersonBrief,
 }
@@ -85,6 +88,9 @@ pub struct QuotesQuery {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
     pub person_id: Option<i64>,
+    pub q: Option<String>,
+    pub pinned: Option<bool>,
+    pub recent: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +105,9 @@ pub struct SubmissionBody {
     pub proposed_person_name: Option<String>,
     pub content: String,
     pub source: Option<String>,
+    pub published_at: Option<String>,
+    pub place_before_id: Option<i64>,
+    pub place_after_id: Option<i64>,
     pub captcha: Option<CaptchaPayload>,
 }
 
@@ -173,17 +182,39 @@ pub async fn list_quotes(
     headers: HeaderMap,
 ) -> AppResult<Response> {
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 200);
+    let q = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let skip_cache = q.is_some() || query.pinned.is_some() || query.recent.unwrap_or(false);
 
-    if let Some(cached) = state.cache.get_quotes(page, page_size, query.person_id) {
-        return Ok(cached_json(&headers, &cached));
+    if !skip_cache {
+        if let Some(cached) = state.cache.get_quotes(page, page_size, query.person_id) {
+            return Ok(cached_json(&headers, &cached));
+        }
     }
 
-    let payload = load_quotes_page(&state, page, page_size, query.person_id).await?;
+    let payload = load_quotes_page(
+        &state,
+        page,
+        page_size,
+        query.person_id,
+        q.as_deref(),
+        query.pinned,
+        query.recent.unwrap_or(false),
+    )
+    .await?;
     let raw = serde_json::to_vec(&payload).map_err(|e| AppError::internal(format!("json: {e}")))?;
-    let cached = match state.cache.put_quotes(page, page_size, query.person_id, raw.clone()) {
-        Some(c) => c,
-        None => crate::cache::cached_or_raw(raw),
+    let cached = if skip_cache {
+        crate::cache::cached_or_raw(raw)
+    } else {
+        match state.cache.put_quotes(page, page_size, query.person_id, raw.clone()) {
+            Some(c) => c,
+            None => crate::cache::cached_or_raw(raw),
+        }
     };
     Ok(cached_json(&headers, &cached))
 }
@@ -193,6 +224,9 @@ async fn load_quotes_page(
     page: u64,
     page_size: u64,
     person_id: Option<i64>,
+    q: Option<&str>,
+    pinned: Option<bool>,
+    recent: bool,
 ) -> AppResult<PaginatedQuotes> {
     let mut finder = quotes::Entity::find()
         .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
@@ -200,9 +234,24 @@ async fn load_quotes_page(
     if let Some(pid) = person_id {
         finder = finder.filter(quotes::Column::PersonId.eq(pid));
     }
-    let paginator = finder
-        .order_by_desc(quotes::Column::CreatedAt)
-        .paginate(&state.db, page_size);
+    if let Some(pinned) = pinned {
+        finder = finder.filter(quotes::Column::Pinned.eq(pinned));
+    }
+    if let Some(q) = q.filter(|s| !s.is_empty()) {
+        finder = finder.filter(crate::services::quote_place::quote_search_condition(&state.db, q).await?);
+    }
+    let finder = if recent {
+        finder
+            .order_by_desc(quotes::Column::PublishedAt)
+            .order_by_desc(quotes::Column::Id)
+    } else {
+        finder
+            .order_by_desc(quotes::Column::Pinned)
+            .order_by_desc(quotes::Column::SortOrder)
+            .order_by_desc(quotes::Column::PublishedAt)
+            .order_by_desc(quotes::Column::Id)
+    };
+    let paginator = finder.paginate(&state.db, page_size);
 
     let total = paginator.num_items().await?;
     let rows = paginator.fetch_page(page - 1).await?;
@@ -231,6 +280,9 @@ async fn load_quotes_page(
             person_id: pid,
             content: q.content,
             source: q.source,
+            pinned: q.pinned,
+            sort_order: q.sort_order,
+            published_at: q.published_at,
             created_at: q.created_at,
             person: PersonBrief {
                 id: person.id,
@@ -296,7 +348,24 @@ pub async fn create_submission(
     )
     .await?;
 
+    if body.place_before_id.is_some() && body.place_after_id.is_some() {
+        return Err(AppError::bad_request("只能指定排在某条前面或后面其中之一"));
+    }
+    if let Some(anchor_id) = body.place_before_id.or(body.place_after_id) {
+        let anchor = quotes::Entity::find_by_id(anchor_id)
+            .one(&state.db)
+            .await?
+            .ok_or_else(|| AppError::bad_request("参考言论不存在"))?;
+        if anchor.status != quotes::status::APPROVED || anchor.pinned {
+            return Err(AppError::bad_request("只能相对首页已展示的言论排序"));
+        }
+    }
     let now = Utc::now().fixed_offset();
+    let published_at = match body.published_at.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => DateTime::parse_from_rfc3339(raw)
+            .map_err(|_| AppError::bad_request("发布时间无效"))?,
+        None => now,
+    };
     let model = quotes::ActiveModel {
         person_id: Set(person_id),
         proposed_person_name: Set(proposed_person_name),
@@ -304,6 +373,11 @@ pub async fn create_submission(
         source: Set(source),
         status: Set(quotes::status::PENDING.to_string()),
         created_at: Set(now),
+        pinned: Set(false),
+        sort_order: Set(0),
+        published_at: Set(published_at),
+        place_before_id: Set(body.place_before_id),
+        place_after_id: Set(body.place_after_id),
         reviewed_at: Set(None),
         reviewed_by: Set(None),
         ..Default::default()

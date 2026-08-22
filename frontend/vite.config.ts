@@ -32,6 +32,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Used only when VITE_API_URL is empty (same-origin /api and /uploads).
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:3000',

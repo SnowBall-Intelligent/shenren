@@ -7,6 +7,7 @@ import type {
   Person,
   CaptchaSettings,
   Quote,
+  QuoteWrite,
   SiteInfo,
   SiteSettingsUpdate,
   SubmissionPayload,
@@ -15,11 +16,19 @@ import type {
 export const publicApi = {
   getSite: () => apiJson<SiteInfo>('/api/site'),
 
-  getQuotes: (page = 1, pageSize = 20, personId?: number) => {
+  getQuotes: (
+    page = 1,
+    pageSize = 20,
+    personId?: number,
+    extras?: { q?: string; pinned?: boolean; recent?: boolean },
+  ) => {
     const q = new URLSearchParams()
     q.set('page', String(page))
     q.set('page_size', String(pageSize))
     if (personId != null) q.set('person_id', String(personId))
+    if (extras?.q?.trim()) q.set('q', extras.q.trim())
+    if (extras?.pinned != null) q.set('pinned', String(extras.pinned))
+    if (extras?.recent) q.set('recent', 'true')
     return apiJson<Paginated<Quote>>(`/api/quotes?${q}`)
   },
 
@@ -61,11 +70,23 @@ export const adminApi = {
   me: () => apiJson<AdminMe>('/api/admin/me'),
 
   // Quotes review
-  listQuotes: (params: { status?: string; page?: number; page_size?: number } = {}) => {
+  listQuotes: (
+    params: {
+      status?: string
+      page?: number
+      page_size?: number
+      q?: string
+      pinned?: boolean
+      recent?: boolean
+    } = {},
+  ) => {
     const q = new URLSearchParams()
     if (params.status) q.set('status', params.status)
     q.set('page', String(params.page ?? 1))
     q.set('page_size', String(params.page_size ?? 20))
+    if (params.q?.trim()) q.set('q', params.q.trim())
+    if (params.pinned != null) q.set('pinned', String(params.pinned))
+    if (params.recent) q.set('recent', 'true')
     return apiJson<Paginated<Quote>>(`/api/admin/quotes?${q}`)
   },
 
@@ -89,13 +110,23 @@ export const adminApi = {
   rejectQuote: (id: number) =>
     apiJson<Quote>(`/api/admin/quotes/${id}/reject`, { method: 'POST', body: {} }),
 
-  createQuote: (body: { person_id: number; content: string; source?: string | null }) =>
+  createQuote: (body: QuoteWrite) =>
     apiJson<Quote & { message?: string }>('/api/admin/quotes', { method: 'POST', body }),
 
-  updateQuote: (
-    id: number,
-    body: { person_id: number; content: string; source?: string | null },
-  ) => apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}`, { method: 'PUT', body }),
+  updateQuote: (id: number, body: QuoteWrite) =>
+    apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}`, { method: 'PUT', body }),
+
+  moveQuote: (id: number, direction: 'up' | 'down') =>
+    apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}/move`, {
+      method: 'POST',
+      body: { direction },
+    }),
+
+  reorderQuotes: (ids: number[]) =>
+    apiJson<{ message?: string }>('/api/admin/quotes/reorder', {
+      method: 'POST',
+      body: { ids },
+    }),
 
   deleteQuote: (id: number) =>
     apiJson<{ message?: string }>(`/api/admin/quotes/${id}`, { method: 'DELETE' }),

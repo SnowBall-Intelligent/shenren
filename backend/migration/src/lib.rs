@@ -4,6 +4,8 @@ mod m20240818_000001_init;
 mod m20260821_000001_captcha;
 mod m20260821_000002_captcha_providers;
 mod m20260821_000003_quote_indexes;
+mod m20260822_000001_quote_placement;
+mod m20260822_000002_quote_place_anchor;
 
 pub struct Migrator;
 
@@ -15,6 +17,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260821_000001_captcha::Migration),
             Box::new(m20260821_000002_captcha_providers::Migration),
             Box::new(m20260821_000003_quote_indexes::Migration),
+            Box::new(m20260822_000001_quote_placement::Migration),
+            Box::new(m20260822_000002_quote_place_anchor::Migration),
         ]
     }
 }

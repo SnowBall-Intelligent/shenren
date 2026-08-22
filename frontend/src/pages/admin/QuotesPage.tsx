@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
   Alert,
   Autocomplete,
@@ -19,9 +29,13 @@ import {
   TextField,
   Typography,
   IconButton,
+  Chip,
 } from '@mui/material'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import { adminApi, normalizePersons, publicApi } from '../../api'
 import type { Person, Quote } from '../../api/types'
 import { ApiError, nameInitial, uploadUrl } from '../../api/client'
@@ -105,6 +119,35 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
     }
   }
 
+  const handleMove = async (quote: Quote, direction: 'up' | 'down') => {
+    try {
+      const data = await adminApi.moveQuote(quote.id, direction)
+      toast.fromSuccess(data)
+      await load(page)
+    } catch (e) {
+      toast.fromError(e)
+    }
+  }
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = quotes.findIndex((q) => q.id === active.id)
+    const newIndex = quotes.findIndex((q) => q.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const next = arrayMove(quotes, oldIndex, newIndex)
+    setQuotes(next)
+    try {
+      const data = await adminApi.reorderQuotes(next.map((q) => q.id))
+      toast.fromSuccess(data)
+    } catch (e) {
+      toast.fromError(e)
+      await load(page)
+    }
+  }
+
   return (
     <Box>
       {!isReview ? (
@@ -122,58 +165,61 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
       ) : quotes.length === 0 ? (
         <Typography color="text.secondary">暂无记录</Typography>
       ) : (
-        <Stack spacing={2}>
-          {quotes.map((q) => (
-            <Box
-              key={q.id}
-              sx={{
-                p: 2,
-                bgcolor: 'background.paper',
-                borderRadius: 2,
-                border: '1px solid #2a2a2a',
-              }}
-            >
-              <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                <Typography variant="body2" color="text.secondary">
-                  {q.person?.name ?? q.proposed_person_name ?? '（无神人）'}
-                  {q.proposed_person_name && !q.person_id ? ' · 新神人提案' : ''}
-                  {isReview ? ` · ${q.status === 'rejected' ? '已驳回' : '待审'}` : ''}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                  {formatTime(q.created_at)}
-                </Typography>
-              </Stack>
-              <Box sx={{ mb: 1 }}>
-                <QuoteMarkdown content={q.content} />
-              </Box>
-              {q.source ? (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                  来源：{q.source}
-                </Typography>
-              ) : null}
-              {isReview && q.status === 'pending' ? (
-                <Stack direction="row" spacing={1}>
-                  <Button size="small" variant="contained" onClick={() => void handleApproveSimple(q)}>
-                    通过
-                  </Button>
-                  <Button size="small" color="error" variant="outlined" onClick={() => void handleReject(q.id)}>
-                    驳回
-                  </Button>
-                </Stack>
-              ) : null}
-              {!isReview ? (
-                <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
-                  <IconButton size="small" onClick={() => setEditQuote(q)} aria-label="修改">
-                    <EditIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" color="error" onClick={() => void handleDelete(q)} aria-label="删除">
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
-              ) : null}
-            </Box>
-          ))}
-        </Stack>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
+          <SortableContext items={quotes.map((q) => q.id)} strategy={verticalListSortingStrategy}>
+            <Stack spacing={2}>
+              {quotes.map((q) => (
+                <SortableQuoteCard key={q.id} id={q.id} draggable={!isReview}>
+                  <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {q.person?.name ?? q.proposed_person_name ?? '（无神人）'}
+                      {q.proposed_person_name && !q.person_id ? ' · 新神人提案' : ''}
+                      {isReview ? ` · ${q.status === 'rejected' ? '已驳回' : '待审'}` : ''}
+                    </Typography>
+                    {!isReview && q.pinned ? <Chip size="small" label="置顶" color="primary" /> : null}
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                      {formatTime(isReview ? q.created_at : (q.published_at ?? q.created_at))}
+                    </Typography>
+                  </Stack>
+                  <Box sx={{ mb: 1 }}>
+                    <QuoteMarkdown content={q.content} />
+                  </Box>
+                  {q.source ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      来源：{q.source}
+                    </Typography>
+                  ) : null}
+                  {isReview && q.status === 'pending' ? (
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="contained" onClick={() => void handleApproveSimple(q)}>
+                        通过
+                      </Button>
+                      <Button size="small" color="error" variant="outlined" onClick={() => void handleReject(q.id)}>
+                        驳回
+                      </Button>
+                    </Stack>
+                  ) : null}
+                  {!isReview ? (
+                    <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+                      <IconButton size="small" onClick={() => void handleMove(q, 'up')} aria-label="上移">
+                        <ArrowUpwardIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" onClick={() => void handleMove(q, 'down')} aria-label="下移">
+                        <ArrowDownwardIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" onClick={() => setEditQuote(q)} aria-label="修改">
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" color="error" onClick={() => void handleDelete(q)} aria-label="删除">
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                  ) : null}
+                </SortableQuoteCard>
+              ))}
+            </Stack>
+          </SortableContext>
+        </DndContext>
       )}
 
       <TablePagination
@@ -222,6 +268,52 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
           await load(page)
         }}
       />
+    </Box>
+  )
+}
+
+function SortableQuoteCard({
+  id,
+  draggable,
+  children,
+}: {
+  id: number
+  draggable: boolean
+  children: ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: !draggable,
+  })
+  return (
+    <Box
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+      }}
+      sx={{
+        p: 2,
+        bgcolor: 'background.paper',
+        borderRadius: 2,
+        border: '1px solid #2a2a2a',
+        display: 'flex',
+        gap: 1,
+      }}
+    >
+      {draggable ? (
+        <IconButton
+          size="small"
+          {...attributes}
+          {...listeners}
+          aria-label="拖拽排序"
+          sx={{ cursor: 'grab', alignSelf: 'flex-start', mt: 0.25 }}
+        >
+          <DragIndicatorIcon fontSize="small" />
+        </IconButton>
+      ) : null}
+      <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
     </Box>
   )
 }

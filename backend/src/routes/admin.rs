@@ -1,9 +1,10 @@
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, FixedOffset, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    Set,
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -13,6 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::routes::public::{
     ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
 };
+use crate::services::quote_place::{place_relative, quote_search_condition, reorder_approved};
 use crate::services::sanitize::{
     normalize_person_name, normalize_site_name, normalize_site_text, normalize_source,
 };
@@ -84,6 +86,9 @@ pub struct AdminQuotesQuery {
     pub status: Option<String>,
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+    pub q: Option<String>,
+    pub pinned: Option<bool>,
+    pub recent: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -94,12 +99,38 @@ pub struct AdminQuoteItem {
     pub content: String,
     pub source: Option<String>,
     pub status: String,
+    pub pinned: bool,
+    pub sort_order: i32,
+    pub published_at: chrono::DateTime<chrono::FixedOffset>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub reviewed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub reviewed_by: Option<i64>,
     pub person: Option<PersonBrief>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+fn admin_quote_item(
+    q: quotes::Model,
+    person: Option<PersonBrief>,
+    message: Option<&str>,
+) -> AdminQuoteItem {
+    AdminQuoteItem {
+        id: q.id,
+        person_id: q.person_id,
+        proposed_person_name: q.proposed_person_name,
+        content: q.content,
+        source: q.source,
+        status: q.status,
+        pinned: q.pinned,
+        sort_order: q.sort_order,
+        published_at: q.published_at,
+        created_at: q.created_at,
+        reviewed_at: q.reviewed_at,
+        reviewed_by: q.reviewed_by,
+        person,
+        message: message.map(str::to_string),
+    }
 }
 
 #[derive(Serialize)]
@@ -134,12 +165,9 @@ fn validate_credentials(username: &str, password: &str) -> AppResult<(String, St
 
 pub async fn bootstrap_status(State(state): State<AppState>) -> AppResult<Json<BootstrapStatus>> {
     let count = admin_count(&state.db).await?;
-    if count > 0 {
-        return Err(AppError::unauthorized("未登录"));
-    }
     Ok(Json(BootstrapStatus {
-        needs_setup: true,
-        has_admins: false,
+        needs_setup: count == 0,
+        has_admins: count > 0,
     }))
 }
 
@@ -585,6 +613,27 @@ pub struct CreateQuoteBody {
     pub person_id: i64,
     pub content: String,
     pub source: Option<String>,
+    pub pinned: Option<bool>,
+    pub sort_order: Option<i32>,
+    pub published_at: Option<DateTime<FixedOffset>>,
+    pub place_before_id: Option<i64>,
+    pub place_after_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct MoveQuoteBody {
+    pub direction: String,
+}
+
+fn placement_from_body(
+    body: &CreateQuoteBody,
+    now: DateTime<FixedOffset>,
+) -> (bool, i32, DateTime<FixedOffset>) {
+    (
+        body.pinned.unwrap_or(false),
+        body.sort_order.unwrap_or(0),
+        body.published_at.unwrap_or(now),
+    )
 }
 
 pub async fn create_quote(
@@ -601,15 +650,18 @@ pub async fn create_quote(
         .await?
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
 
-    let source = normalize_source(body.source)?;
-
     let now = Utc::now().fixed_offset();
+    let (pinned, sort_order, published_at) = placement_from_body(&body, now);
+    let source = normalize_source(body.source)?;
     let inserted = quotes::ActiveModel {
         person_id: Set(Some(person.id)),
         proposed_person_name: Set(None),
         content: Set(content),
         source: Set(source),
         status: Set(quotes::status::APPROVED.to_string()),
+        pinned: Set(pinned),
+        sort_order: Set(sort_order),
+        published_at: Set(published_at),
         created_at: Set(now),
         reviewed_at: Set(Some(now)),
         reviewed_by: Set(Some(admin.id)),
@@ -617,27 +669,31 @@ pub async fn create_quote(
     }
     .insert(&state.db)
     .await?;
+    place_relative(
+        &state.db,
+        inserted.id,
+        inserted.pinned,
+        body.place_before_id,
+        body.place_after_id,
+    )
+    .await?;
+    let inserted = quotes::Entity::find_by_id(inserted.id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::internal("语录写入后丢失"))?;
     state.cache.invalidate_quotes();
 
     Ok((
         StatusCode::CREATED,
-        Json(AdminQuoteItem {
-            id: inserted.id,
-            person_id: inserted.person_id,
-            proposed_person_name: inserted.proposed_person_name,
-            content: inserted.content,
-            source: inserted.source,
-            status: inserted.status,
-            created_at: inserted.created_at,
-            reviewed_at: inserted.reviewed_at,
-            reviewed_by: inserted.reviewed_by,
-            person: Some(PersonBrief {
+        Json(admin_quote_item(
+            inserted,
+            Some(PersonBrief {
                 id: person.id,
                 name: person.name,
                 avatar_url: AppState::avatar_url(&person.avatar_path),
             }),
-            message: Some("语录已添加".to_string()),
-        }),
+            Some("语录已添加"),
+        )),
     ))
 }
 
@@ -659,32 +715,42 @@ pub async fn update_quote(
         .await?
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
     let source = normalize_source(body.source)?;
+    let pinned = body.pinned.unwrap_or(quote.pinned);
+    let sort_order = body.sort_order.unwrap_or(quote.sort_order);
+    let published_at = body.published_at.unwrap_or(quote.published_at);
 
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(Some(person.id));
     am.proposed_person_name = Set(None);
     am.content = Set(content);
     am.source = Set(source);
+    am.pinned = Set(pinned);
+    am.sort_order = Set(sort_order);
+    am.published_at = Set(published_at);
     let updated = am.update(&state.db).await?;
+    place_relative(
+        &state.db,
+        updated.id,
+        updated.pinned,
+        body.place_before_id,
+        body.place_after_id,
+    )
+    .await?;
+    let updated = quotes::Entity::find_by_id(updated.id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::internal("语录更新后丢失"))?;
     state.cache.invalidate_quotes();
 
-    Ok(Json(AdminQuoteItem {
-        id: updated.id,
-        person_id: updated.person_id,
-        proposed_person_name: updated.proposed_person_name,
-        content: updated.content,
-        source: updated.source,
-        status: updated.status,
-        created_at: updated.created_at,
-        reviewed_at: updated.reviewed_at,
-        reviewed_by: updated.reviewed_by,
-        person: Some(PersonBrief {
+    Ok(Json(admin_quote_item(
+        updated,
+        Some(PersonBrief {
             id: person.id,
             name: person.name,
             avatar_url: AppState::avatar_url(&person.avatar_path),
         }),
-        message: Some("语录已更新".to_string()),
-    }))
+        Some("语录已更新"),
+    )))
 }
 
 pub async fn delete_quote(
@@ -702,6 +768,144 @@ pub async fn delete_quote(
     Ok(Json(serde_json::json!({ "message": "语录已删除" })))
 }
 
+#[derive(Deserialize)]
+pub struct ReorderQuotesBody {
+    pub ids: Vec<i64>,
+}
+
+pub async fn reorder_quotes(
+    State(state): State<AppState>,
+    session: Session,
+    Json(body): Json<ReorderQuotesBody>,
+) -> AppResult<Json<serde_json::Value>> {
+    let _ = require_admin(&session, &state.db).await?;
+    reorder_approved(&state.db, &body.ids).await?;
+    state.cache.invalidate_quotes();
+    Ok(Json(serde_json::json!({ "message": "顺序已更新" })))
+}
+
+pub async fn move_quote(
+    State(state): State<AppState>,
+    session: Session,
+    Path(id): Path<i64>,
+    Json(body): Json<MoveQuoteBody>,
+) -> AppResult<Json<AdminQuoteItem>> {
+    let _ = require_admin(&session, &state.db).await?;
+    let quote = quotes::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::not_found("言论不存在"))?;
+
+    if quote.status != quotes::status::APPROVED {
+        return Err(AppError::bad_request("只能调整已通过的言论"));
+    }
+
+    let up = match body.direction.as_str() {
+        "up" => true,
+        "down" => false,
+        _ => return Err(AppError::bad_request("direction 须为 up 或 down")),
+    };
+
+    let neighbor = if up {
+        quotes::Entity::find()
+            .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
+            .filter(quotes::Column::Pinned.eq(quote.pinned))
+            .filter(quotes::Column::Id.ne(quote.id))
+            .filter(ranks_before(&quote))
+            .order_by_asc(quotes::Column::SortOrder)
+            .order_by_asc(quotes::Column::PublishedAt)
+            .order_by_asc(quotes::Column::Id)
+            .one(&state.db)
+            .await?
+    } else {
+        quotes::Entity::find()
+            .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
+            .filter(quotes::Column::Pinned.eq(quote.pinned))
+            .filter(quotes::Column::Id.ne(quote.id))
+            .filter(ranks_after(&quote))
+            .order_by_desc(quotes::Column::SortOrder)
+            .order_by_desc(quotes::Column::PublishedAt)
+            .order_by_desc(quotes::Column::Id)
+            .one(&state.db)
+            .await?
+    };
+
+    let Some(neighbor) = neighbor else {
+        return Err(AppError::bad_request(if up {
+            "已经在最前"
+        } else {
+            "已经在最后"
+        }));
+    };
+
+    let mut current_order = quote.sort_order;
+    let mut neighbor_order = neighbor.sort_order;
+    if current_order == neighbor_order {
+        if up {
+            current_order += 1;
+        } else {
+            current_order -= 1;
+        }
+    } else {
+        std::mem::swap(&mut current_order, &mut neighbor_order);
+    }
+
+    let mut current: quotes::ActiveModel = quote.into();
+    current.sort_order = Set(current_order);
+    let updated = current.update(&state.db).await?;
+    let mut other: quotes::ActiveModel = neighbor.into();
+    other.sort_order = Set(neighbor_order);
+    other.update(&state.db).await?;
+    state.cache.invalidate_quotes();
+
+    let person = if let Some(pid) = updated.person_id {
+        persons::Entity::find_by_id(pid)
+            .one(&state.db)
+            .await?
+            .map(|p| PersonBrief {
+                id: p.id,
+                name: p.name,
+                avatar_url: AppState::avatar_url(&p.avatar_path),
+            })
+    } else {
+        None
+    };
+
+    Ok(Json(admin_quote_item(updated, person, Some("顺序已更新"))))
+}
+
+fn ranks_before(q: &quotes::Model) -> Condition {
+    Condition::any()
+        .add(quotes::Column::SortOrder.gt(q.sort_order))
+        .add(
+            Condition::all()
+                .add(quotes::Column::SortOrder.eq(q.sort_order))
+                .add(quotes::Column::PublishedAt.gt(q.published_at)),
+        )
+        .add(
+            Condition::all()
+                .add(quotes::Column::SortOrder.eq(q.sort_order))
+                .add(quotes::Column::PublishedAt.eq(q.published_at))
+                .add(quotes::Column::Id.gt(q.id)),
+        )
+}
+
+fn ranks_after(q: &quotes::Model) -> Condition {
+    Condition::any()
+        .add(quotes::Column::SortOrder.lt(q.sort_order))
+        .add(
+            Condition::all()
+                .add(quotes::Column::SortOrder.eq(q.sort_order))
+                .add(quotes::Column::PublishedAt.lt(q.published_at)),
+        )
+        .add(
+            Condition::all()
+                .add(quotes::Column::SortOrder.eq(q.sort_order))
+                .add(quotes::Column::PublishedAt.eq(q.published_at))
+                .add(quotes::Column::Id.lt(q.id)),
+        )
+}
+
 pub async fn list_quotes_admin(
     State(state): State<AppState>,
     session: Session,
@@ -709,7 +913,7 @@ pub async fn list_quotes_admin(
 ) -> AppResult<Json<PaginatedAdminQuotes>> {
     let _ = require_admin(&session, &state.db).await?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 200);
 
     let mut finder = quotes::Entity::find();
     if let Some(status) = query
@@ -729,12 +933,36 @@ pub async fn list_quotes_admin(
             finder = finder.filter(quotes::Column::Status.eq(status));
         }
     }
+    if let Some(pinned) = query.pinned {
+        finder = finder.filter(quotes::Column::Pinned.eq(pinned));
+    }
+    if let Some(q) = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        finder = finder.filter(quote_search_condition(&state.db, q).await?);
+    }
 
-    // Pending first when no status filter, then newest.
-    let paginator = if query.status.is_none() {
+    let approved = query.status.as_deref() == Some("approved");
+    let recent = query.recent.unwrap_or(false);
+    let paginator = if recent {
+        finder
+            .order_by_desc(quotes::Column::PublishedAt)
+            .order_by_desc(quotes::Column::Id)
+            .paginate(&state.db, page_size)
+    } else if query.status.is_none() {
         finder
             .order_by_asc(quotes::Column::Status)
             .order_by_desc(quotes::Column::CreatedAt)
+            .paginate(&state.db, page_size)
+    } else if approved {
+        finder
+            .order_by_desc(quotes::Column::Pinned)
+            .order_by_desc(quotes::Column::SortOrder)
+            .order_by_desc(quotes::Column::PublishedAt)
+            .order_by_desc(quotes::Column::Id)
             .paginate(&state.db, page_size)
     } else {
         finder
@@ -759,19 +987,7 @@ pub async fn list_quotes_admin(
         } else {
             None
         };
-        items.push(AdminQuoteItem {
-            id: q.id,
-            person_id: q.person_id,
-            proposed_person_name: q.proposed_person_name,
-            content: q.content,
-            source: q.source,
-            status: q.status,
-            created_at: q.created_at,
-            reviewed_at: q.reviewed_at,
-            reviewed_by: q.reviewed_by,
-            person,
-            message: None,
-        });
+        items.push(admin_quote_item(q, person, None));
     }
 
     Ok(Json(PaginatedAdminQuotes {
@@ -825,12 +1041,22 @@ pub async fn approve_quote(
     }
 
     let now = Utc::now().fixed_offset();
+    let place_before = quote.place_before_id;
+    let place_after = quote.place_after_id;
+    let pinned = quote.pinned;
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(person_id);
     am.status = Set(quotes::status::APPROVED.to_string());
+    am.place_before_id = Set(None);
+    am.place_after_id = Set(None);
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
+    place_relative(&state.db, updated.id, pinned, place_before, place_after).await?;
+    let updated = quotes::Entity::find_by_id(updated.id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::internal("审核后丢失"))?;
     state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
@@ -846,19 +1072,7 @@ pub async fn approve_quote(
         None
     };
 
-    Ok(Json(AdminQuoteItem {
-        id: updated.id,
-        person_id: updated.person_id,
-        proposed_person_name: updated.proposed_person_name,
-        content: updated.content,
-        source: updated.source,
-        status: updated.status,
-        created_at: updated.created_at,
-        reviewed_at: updated.reviewed_at,
-        reviewed_by: updated.reviewed_by,
-        person,
-        message: None,
-    }))
+    Ok(Json(admin_quote_item(updated, person, None)))
 }
 
 /// JSON approve: bind an existing person, or create one (optional avatar URL).
@@ -920,12 +1134,22 @@ pub async fn approve_quote_json(
     }
 
     let now = Utc::now().fixed_offset();
+    let place_before = quote.place_before_id;
+    let place_after = quote.place_after_id;
+    let pinned = quote.pinned;
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(person_id);
     am.status = Set(quotes::status::APPROVED.to_string());
+    am.place_before_id = Set(None);
+    am.place_after_id = Set(None);
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
+    place_relative(&state.db, updated.id, pinned, place_before, place_after).await?;
+    let updated = quotes::Entity::find_by_id(updated.id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::internal("审核后丢失"))?;
     state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
@@ -941,19 +1165,7 @@ pub async fn approve_quote_json(
         None
     };
 
-    Ok(Json(AdminQuoteItem {
-        id: updated.id,
-        person_id: updated.person_id,
-        proposed_person_name: updated.proposed_person_name,
-        content: updated.content,
-        source: updated.source,
-        status: updated.status,
-        created_at: updated.created_at,
-        reviewed_at: updated.reviewed_at,
-        reviewed_by: updated.reviewed_by,
-        person,
-        message: None,
-    }))
+    Ok(Json(admin_quote_item(updated, person, None)))
 }
 
 pub async fn reject_quote(
@@ -992,17 +1204,5 @@ pub async fn reject_quote(
         None
     };
 
-    Ok(Json(AdminQuoteItem {
-        id: updated.id,
-        person_id: updated.person_id,
-        proposed_person_name: updated.proposed_person_name,
-        content: updated.content,
-        source: updated.source,
-        status: updated.status,
-        created_at: updated.created_at,
-        reviewed_at: updated.reviewed_at,
-        reviewed_by: updated.reviewed_by,
-        person,
-        message: None,
-    }))
+    Ok(Json(admin_quote_item(updated, person, None)))
 }

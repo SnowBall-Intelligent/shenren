@@ -28,6 +28,16 @@ export default function LoginPage() {
     let cancelled = false
     ;(async () => {
       try {
+        const status = await adminApi.bootstrapStatus()
+        if (cancelled) return
+        if (status.needs_setup) {
+          navigate('/admin/setup', { replace: true })
+          return
+        }
+      } catch {
+        /* treat as already initialized */
+      }
+      try {
         await adminApi.me()
         if (!cancelled) navigate(from, { replace: true })
       } catch {
@@ -90,10 +100,6 @@ export default function LoginPage() {
           </Button>
         </Stack>
         <Box sx={{ mt: 2, textAlign: 'center' }}>
-          <Link component={RouterLink} to="/admin/setup" underline="hover" variant="body2" color="text.secondary">
-            首次安装
-          </Link>
-          {' · '}
           <Link component={RouterLink} to="/" underline="hover" variant="body2" color="text.secondary">
             返回首页
           </Link>

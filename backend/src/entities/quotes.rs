@@ -13,6 +13,11 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub source: Option<String>,
     pub status: String,
+    pub pinned: bool,
+    pub sort_order: i32,
+    pub published_at: DateTimeWithTimeZone,
+    pub place_before_id: Option<i64>,
+    pub place_after_id: Option<i64>,
     pub created_at: DateTimeWithTimeZone,
     pub reviewed_at: Option<DateTimeWithTimeZone>,
     pub reviewed_by: Option<i64>,
