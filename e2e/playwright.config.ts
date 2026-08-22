@@ -25,11 +25,13 @@ export default defineConfig({
     ...(process.env.CI
       ? [
           {
-            command: 'npm --prefix frontend run dev',
-            cwd: root,
+            command: 'npx vite --host 127.0.0.1 --port 5173 --strictPort',
+            cwd: path.join(root, 'frontend'),
             url: WEB,
-            timeout: 120_000,
+            timeout: 180_000,
             reuseExistingServer: false,
+            stdout: 'pipe' as const,
+            stderr: 'pipe' as const,
           },
         ]
       : []),

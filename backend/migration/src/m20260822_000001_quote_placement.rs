@@ -37,6 +37,8 @@ impl MigrationTrait for Migration {
                 .await?;
         }
         // SQLite rejects non-constant defaults (e.g. CURRENT_TIMESTAMP) on ADD COLUMN.
+        // MySQL TIMESTAMP cannot default to 1970-01-01 00:00:00 (range starts at
+        // 00:00:01 UTC; UTC+8 makes that instant 1969 and MySQL error 1067).
         if !manager.has_column("quotes", "published_at").await? {
             manager
                 .alter_table(
@@ -46,7 +48,7 @@ impl MigrationTrait for Migration {
                             ColumnDef::new(Quotes::PublishedAt)
                                 .timestamp_with_time_zone()
                                 .not_null()
-                                .default("1970-01-01 00:00:00"),
+                                .default("2000-01-01 00:00:00"),
                         )
                         .to_owned(),
                 )

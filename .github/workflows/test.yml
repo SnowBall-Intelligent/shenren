@@ -47,6 +47,10 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Compile API
+        working-directory: backend
+        run: cargo build
+
       - name: API + browser e2e
         working-directory: e2e
         env:
