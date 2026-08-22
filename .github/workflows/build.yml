@@ -37,15 +37,7 @@ jobs:
       packages: write
     env:
       WITH_MYSQL: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.with_mysql) }}
-      # Fork PRs cannot push to this repo's GHCR. Same-repo commits always push
-      # unless a manual run turns push_image off.
-      PUSH_IMAGE: ${{
-        (github.event_name == 'workflow_dispatch' && inputs.push_image)
-        || (github.event_name != 'workflow_dispatch'
-            && github.event_name != 'pull_request')
-        || (github.event_name == 'pull_request'
-            && github.event.pull_request.head.repo.full_name == github.repository)
-      }}
+      PUSH_IMAGE: ${{ (github.event_name == 'workflow_dispatch' && inputs.push_image) || (github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
     steps:
       - name: Checkout
