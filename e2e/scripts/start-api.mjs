@@ -17,6 +17,12 @@ const child = spawn('cargo', ['run', '--manifest-path', 'backend/Cargo.toml'], {
     BIND_ADDR: '127.0.0.1:3000',
     COOKIE_SECURE: 'false',
     COOKIE_SAMESITE: 'Lax',
+    // CI + retries hit /login and /submissions far more than production defaults.
+    RATE_LIMIT_LOGIN: '10000',
+    RATE_LIMIT_SUBMIT: '10000',
+    RATE_LIMIT_HOME: '10000',
+    RATE_LIMIT_ADMIN: '10000',
+    RATE_LIMIT_UPLOADS: '10000',
   },
 })
 

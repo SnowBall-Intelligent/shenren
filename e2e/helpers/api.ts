@@ -2,6 +2,9 @@ import { type APIRequestContext, expect } from '@playwright/test'
 import { ADMIN_PASS, ADMIN_USER } from './env'
 
 export async function ensureAdmin(request: APIRequestContext): Promise<void> {
+  const me = await request.get('/api/admin/me')
+  if (me.ok()) return
+
   const statusRes = await request.get('/api/admin/bootstrap-status')
   expect(statusRes.ok()).toBeTruthy()
   const status = (await statusRes.json()) as { needs_setup: boolean }

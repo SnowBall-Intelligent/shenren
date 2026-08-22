@@ -2,8 +2,11 @@ import { expect, test } from '@playwright/test'
 import { API, unique, WEB } from '../helpers/env'
 import { createPerson, ensureAdmin } from '../helpers/api'
 
-test('mutating admin routes without Origin are forbidden', async ({ playwright }) => {
-  const bare = await playwright.request.newContext({ baseURL: API })
+test('mutating admin routes from a foreign origin are forbidden', async ({ playwright }) => {
+  const bare = await playwright.request.newContext({
+    baseURL: API,
+    extraHTTPHeaders: { Origin: 'https://evil.example' },
+  })
   const res = await bare.post('/api/admin/login', {
     data: { username: 'x', password: 'yyyyyy' },
   })

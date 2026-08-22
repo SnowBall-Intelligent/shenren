@@ -3,7 +3,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { API, WEB } from './helpers/env'
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const here = path.dirname(fileURLToPath(import.meta.url))
+const root = path.join(here, '..')
+const adminAuthFile = path.join(here, '.auth/admin.json')
 
 export default defineConfig({
   globalSetup: './global-setup.ts',
@@ -32,6 +34,10 @@ export default defineConfig({
             reuseExistingServer: false,
             stdout: 'pipe' as const,
             stderr: 'pipe' as const,
+            env: {
+              ...process.env,
+              VITE_API_URL: '',
+            },
           },
         ]
       : []),
@@ -43,6 +49,7 @@ export default defineConfig({
       use: {
         baseURL: API,
         extraHTTPHeaders: { Origin: WEB },
+        storageState: adminAuthFile,
       },
     },
     ...(process.env.CI
