@@ -136,23 +136,34 @@ export CORS_ORIGINS=https://your.pages.example
 docker compose up -d --build
 ```
 
+## 测试
+
+独立套件在 `e2e/`（不改后端源码）：**API**（`e2e/api`）+ **浏览器**（`e2e/web`）。
+
+本地默认只跑 API（不起浏览器、不起 Vite）：
+
+```powershell
+npm --prefix e2e ci
+npm test
+```
+
+浏览器用例只在 CI 跑（`.github/workflows/test.yml` 会装 Chromium 并执行 `npm run test:ci`）。
+
 ## CI
 
-GitHub Actions（`.github/workflows/build.yml`）会构建：
+- **Test**（`.github/workflows/test.yml`）：每次提交跑上述 API + 浏览器 e2e。
+- **Build**（`.github/workflows/build.yml`）：Linux 二进制 + Docker 镜像推 GHCR。
 
-- Linux `x86_64` 可执行文件 `shenren-x86_64-unknown-linux-gnu`
-- Docker 镜像（仅 API：`cargo build --release`）
+| 事件 | 推镜像 | 镜像 tag | MySQL 冒烟 | Release 附件 |
+|------|--------|----------|------------|--------------|
+| `push` / 同仓库 PR | 会 | `dev-sha-<short>`，PR 另有 `dev-pr-N` | 否 | 否 |
+| 手动 `workflow_dispatch` | 默认会 | `dev-sha-<short>` + `dev-manual` | 默认会 | 否 |
+| **任意 Release**（含预发布） | 会 | **Release 的 tag 名**（正式版另打 `latest`） | 会 | 会 |
+| 预发布改为正式版 | 会 | 补打 `latest` | 会 | 会 |
 
-触发：
+开发镜像只保留最近 10 个。删除前会对照 Release 的 tag 名和名称，命中的以及 `latest` 不删。Fork PR 不推 GHCR。
 
-| 事件 | 行为 |
-|------|------|
-| `push` / `pull_request` | 构建镜像与二进制，上传 artifact；**不**推 GHCR，**不**起 MySQL |
-| **手动** `workflow_dispatch` | 默认用 Compose MySQL 做 `/api/site` 启动探测，并推 GHCR（可在输入里关掉） |
-| **任意 Release**（含预发布） | 同上，并把二进制挂到 Release；正式版额外打 `latest` |
-| 预发布改为正式版 | `release.edited` 且 `prerelease: true → false` 时再跑一遍，补打 `latest` |
-
-镜像：`ghcr.io/<owner>/<repo>`。手动运行可取消「Use Compose MySQL」以跳过探测（假定连宿主机 MySQL）。
+镜像：`ghcr.io/<owner>/<repo>`。手动运行可取消「Use Compose MySQL」以跳过探测。
 
 ## 公开 API
 

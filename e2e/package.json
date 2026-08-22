@@ -1,0 +1,15 @@
+{
+  "name": "shenren-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test --project=api",
+    "test:api": "playwright test --project=api",
+    "test:ci": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.13.3",
+    "typescript": "~6.0.2"
+  }
+}

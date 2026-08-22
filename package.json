@@ -7,7 +7,9 @@
     "dev:backend": "watchexec -e rs,toml -r --cwd backend cargo run",
     "dev:backend:once": "cargo run --manifest-path backend/Cargo.toml",
     "build:frontend": "npm --prefix frontend run build",
-    "build:backend": "cargo build --manifest-path backend/Cargo.toml --release"
+    "build:backend": "cargo build --manifest-path backend/Cargo.toml --release",
+    "test": "npm --prefix e2e test",
+    "test:e2e": "npm --prefix e2e test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

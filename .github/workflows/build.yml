@@ -37,7 +37,15 @@ jobs:
       packages: write
     env:
       WITH_MYSQL: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.with_mysql) }}
-      PUSH_IMAGE: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
+      # Fork PRs cannot push to this repo's GHCR. Same-repo commits always push
+      # unless a manual run turns push_image off.
+      PUSH_IMAGE: ${{
+        (github.event_name == 'workflow_dispatch' && inputs.push_image)
+        || (github.event_name != 'workflow_dispatch'
+            && github.event_name != 'pull_request')
+        || (github.event_name == 'pull_request'
+            && github.event.pull_request.head.repo.full_name == github.repository)
+      }}
 
     steps:
       - name: Checkout
@@ -51,10 +59,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
           tags: |
-            type=sha,format=short,prefix=sha-
-            type=ref,event=branch,enable=${{ github.event_name == 'push' }}
-            type=raw,value=manual,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha,format=short,prefix=dev-sha-,enable=${{ github.event_name != 'release' }}
+            type=ref,event=pr,prefix=dev-,enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=dev-manual,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
 
@@ -113,6 +123,13 @@ jobs:
             [ -n "$tag" ] || continue
             docker push "$tag"
           done
+
+      - name: Prune old dev images
+        if: env.PUSH_IMAGE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_DEV_IMAGES: "10"
+        run: python3 scripts/ghcr_prune_dev_images.py
 
       - name: Attach binary to GitHub Release
         if: github.event_name == 'release'
