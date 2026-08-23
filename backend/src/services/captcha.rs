@@ -59,14 +59,14 @@ pub fn normalize_vendor(raw: &str) -> AppResult<String> {
         "turnstile" => Ok("turnstile".to_string()),
         "recaptcha" => Ok("recaptcha".to_string()),
         "geetest" => Ok("geetest".to_string()),
-        other => Err(AppError::bad_request(format!("未知的人机验证类型: {other}"))),
+        other => Err(AppError::bad_request(format!(
+            "未知的人机验证类型: {other}"
+        ))),
     }
 }
 
 fn config_complete(item: &CaptchaProviderConfig) -> bool {
-    is_vendor(&item.provider)
-        && !item.site_key.trim().is_empty()
-        && !item.secret.trim().is_empty()
+    is_vendor(&item.provider) && !item.site_key.trim().is_empty() && !item.secret.trim().is_empty()
 }
 
 fn legacy_providers(settings: &site_settings::Model) -> Vec<CaptchaProviderConfig> {
@@ -108,7 +108,9 @@ pub fn serialize_providers(items: &[CaptchaProviderConfig]) -> AppResult<String>
     serde_json::to_string(items).map_err(|e| AppError::internal(format!("captcha json: {e}")))
 }
 
-pub fn first_as_legacy(items: &[CaptchaProviderConfig]) -> (String, Option<String>, Option<String>) {
+pub fn first_as_legacy(
+    items: &[CaptchaProviderConfig],
+) -> (String, Option<String>, Option<String>) {
     match items.first() {
         Some(item) => (
             item.provider.clone(),
@@ -201,7 +203,9 @@ async fn verify_one(
         "turnstile" => verify_turnstile(&cfg.secret, payload, remote_ip).await,
         "recaptcha" => verify_recaptcha(&cfg.secret, payload, remote_ip).await,
         "geetest" => verify_geetest(&cfg.site_key, &cfg.secret, payload).await,
-        other => Err(AppError::bad_request(format!("未知的人机验证类型: {other}"))),
+        other => Err(AppError::bad_request(format!(
+            "未知的人机验证类型: {other}"
+        ))),
     }
 }
 
@@ -281,7 +285,11 @@ async fn verify_recaptcha(
     }
 }
 
-async fn verify_geetest(captcha_id: &str, captcha_key: &str, payload: &CaptchaPayload) -> AppResult<()> {
+async fn verify_geetest(
+    captcha_id: &str,
+    captcha_key: &str,
+    payload: &CaptchaPayload,
+) -> AppResult<()> {
     let lot_number = payload
         .lot_number
         .as_deref()

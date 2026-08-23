@@ -97,3 +97,10 @@ export function nameInitial(name: string | null | undefined): string {
   if (!trimmed) return '?'
   return [...trimmed][0] ?? '?'
 }
+
+export function qqAvatarUrl(qq: string): string | undefined {
+  const value = qq.trim()
+  return /^[1-9]\d{4,19}$/.test(value)
+    ? `https://q2.qlogo.cn/headimg_dl?dst_uin=${value}&spec=0`
+    : undefined
+}

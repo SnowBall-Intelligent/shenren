@@ -126,7 +126,8 @@ mod tests {
 
     #[test]
     fn strips_tags_and_bad_links() {
-        let s = normalize_quote_content("hello <script>x</script> [a](javascript:alert(1))").unwrap();
+        let s =
+            normalize_quote_content("hello <script>x</script> [a](javascript:alert(1))").unwrap();
         assert!(!s.to_ascii_lowercase().contains("<script"));
         assert!(s.contains("[a](#)"));
     }

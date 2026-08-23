@@ -58,14 +58,14 @@ export interface QuotePerson {
 }
 
 export interface Quote {
-  id: number
+  id: string
   person_id?: number | null
   proposed_person_name?: string | null
+  proposed_person_avatar_url?: string | null
   content: string
   source: string | null
   status?: 'pending' | 'approved' | 'rejected'
   pinned?: boolean
-  sort_order?: number
   published_at?: string
   created_at: string
   reviewed_at?: string | null
@@ -79,10 +79,9 @@ export interface QuoteWrite {
   content: string
   source?: string | null
   pinned?: boolean
-  sort_order?: number
   published_at?: string | null
-  place_before_id?: number | null
-  place_after_id?: number | null
+  place_before_id?: string | null
+  place_after_id?: string | null
 }
 
 export interface Paginated<T> {
@@ -95,11 +94,12 @@ export interface Paginated<T> {
 export interface SubmissionPayload {
   person_id?: number | null
   proposed_person_name?: string | null
+  proposed_person_qq?: string | null
   content: string
   source?: string | null
   published_at?: string | null
-  place_before_id?: number | null
-  place_after_id?: number | null
+  place_before_id?: string | null
+  place_after_id?: string | null
   captcha?: CaptchaPayload
 }
 
@@ -132,4 +132,33 @@ export interface ApiErrorBody {
   error?: string
   message?: string
   captcha_fallback?: boolean
+}
+
+export interface ApiKey {
+  id: number
+  name: string
+  key_prefix: string
+  enabled: boolean
+  rate_limit: number | null
+  rate_window_secs: number | null
+  total_quota: number | null
+  used_count: number
+  concurrency_limit: number | null
+  allowed_ips: string[]
+  allowed_domains: string[]
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  key?: string
+}
+
+export interface ApiKeyWrite {
+  name: string
+  enabled: boolean
+  rate_limit: number | null
+  rate_window_secs: number | null
+  total_quota: number | null
+  concurrency_limit: number | null
+  allowed_ips: string[]
+  allowed_domains: string[]
 }

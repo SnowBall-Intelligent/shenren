@@ -1,18 +1,31 @@
 # AGENTS.md
 
-## 仓库
+## 仓库结构
 
-- `backend/`：Axum API。不要为了测试改 `backend/src`。
-- `frontend/`：Vite + MUI。不要为了测试去改页面实现。
-- `e2e/`：独立测试套件（API + Web）。
-- `.github/workflows/test.yml`：CI 跑全部 e2e。
-- `.github/workflows/build.yml`：构建并推 GHCR。
+- `backend/`：Rust Axum API、SeaORM 实体与迁移。
+- `frontend/`：Vite + React + MUI 前台和管理后台。
+- `e2e/`：独立 Playwright 测试套件，包含真实 API 与浏览器测试。
+- `.github/workflows/test.yml`：CI 的 API + Web 全量测试。
+- `.github/workflows/build.yml`：构建产物并推送 GHCR。
 
-## 测试
+## 修改原则
 
-- 新功能或行为变更必须在 `e2e/` 补用例：成功路径 + 至少一条失败/边界。
-- API：`e2e/api/*.spec.ts`，用 Playwright `request` 打真实 `/api/*`。
-- Web：`e2e/web/*.spec.ts`，只在 **CI** 跑。
-- **本地不跑浏览器**：不要 `playwright install`、不要起 Chromium / Vite 来测。
-- 做完后必须跑：`npm test`（只跑 API）。不要只编译。
-- CI 跑 `npm --prefix e2e run test:ci`（API + Web）。
+- 测试应验证真实产品行为。不要为了让测试通过而在 `backend/src` 或前端页面中加入仅测试使用的分支。
+- 保持 SQLite 与 MySQL 迁移兼容；数据结构变更必须新增迁移并同步 SeaORM 实体。
+- 前后端接口字段、校验与错误语义必须同步，避免只修改一端。
+- 不要覆盖或回退工作区中与当前任务无关的已有修改。
+
+## 测试要求
+
+- 新功能或行为变更必须在 `e2e/` 增加成功路径，以及至少一条失败或边界路径。
+- API 用例放在 `e2e/api/*.spec.ts`，通过 Playwright `request` 访问真实 `/api/*`。
+- Web 用例放在 `e2e/web/*.spec.ts`，只在 CI 运行。
+- 本地不安装或启动浏览器，不运行 `playwright install`、Chromium 或 Vite 浏览器测试。
+- 所有改动完成后必须在仓库根目录运行 `npm test`，不能只做编译检查。
+- CI 使用 `npm --prefix e2e run test:ci` 运行 API + Web。
+
+## 按改动范围追加检查
+
+- Rust 代码或迁移：运行 `cargo fmt --all -- --check` 和 `cargo check`（工作目录 `backend/`）。
+- 前端代码：运行 `npm run lint` 和 `npm run build`（工作目录 `frontend/`）。
+- 不要求把 Clippy 作为合并门禁；若主动运行，应区分既有告警与本次新增问题。

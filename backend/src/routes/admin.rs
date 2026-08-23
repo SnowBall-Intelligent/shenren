@@ -3,8 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, FixedOffset, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    Set,
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -14,18 +13,21 @@ use crate::error::{AppError, AppResult};
 use crate::routes::public::{
     ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
 };
-use crate::services::quote_place::{place_relative, quote_search_condition, reorder_approved};
-use crate::services::sanitize::{
-    normalize_person_name, normalize_site_name, normalize_site_text, normalize_source,
-};
 use crate::services::auth::{
     admin_count, find_admin_by_username, hash_password, require_admin, verify_password,
     SESSION_ADMIN_ID,
 };
+use crate::services::quote_place::{
+    move_in_chain, new_quote_id, on_pinned_changed, ordered_approved_quotes, place_quote,
+    quote_search_condition, remove_from_chain, reorder_approved,
+};
+use crate::services::sanitize::{
+    normalize_person_name, normalize_site_name, normalize_site_text, normalize_source,
+};
 use crate::services::upload::{
     delete_avatar_file, generate_letter_avatar, is_letter_avatar, name_initial,
-    parse_approve_multipart, parse_avatar_url, parse_person_multipart, resolve_new_avatar,
-    AvatarFile,
+    parse_approve_multipart, parse_avatar_url, parse_person_multipart, qq_avatar_url,
+    resolve_new_avatar, AvatarFile,
 };
 use crate::state::AppState;
 
@@ -93,14 +95,14 @@ pub struct AdminQuotesQuery {
 
 #[derive(Serialize)]
 pub struct AdminQuoteItem {
-    pub id: i64,
+    pub id: String,
     pub person_id: Option<i64>,
     pub proposed_person_name: Option<String>,
+    pub proposed_person_avatar_url: Option<String>,
     pub content: String,
     pub source: Option<String>,
     pub status: String,
     pub pinned: bool,
-    pub sort_order: i32,
     pub published_at: chrono::DateTime<chrono::FixedOffset>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub reviewed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
@@ -119,11 +121,11 @@ fn admin_quote_item(
         id: q.id,
         person_id: q.person_id,
         proposed_person_name: q.proposed_person_name,
+        proposed_person_avatar_url: q.proposed_person_avatar_url,
         content: q.content,
         source: q.source,
         status: q.status,
         pinned: q.pinned,
-        sort_order: q.sort_order,
         published_at: q.published_at,
         created_at: q.created_at,
         reviewed_at: q.reviewed_at,
@@ -250,9 +252,7 @@ pub async fn list_admins(
         .all(&state.db)
         .await?;
     Ok(Json(
-        rows.into_iter()
-            .map(|a| admin_info(&a, None))
-            .collect(),
+        rows.into_iter().map(|a| admin_info(&a, None)).collect(),
     ))
 }
 
@@ -495,10 +495,18 @@ async fn insert_person(
     state: &AppState,
     name: String,
     avatar: Option<AvatarFile>,
+    qq_avatar_url: Option<String>,
     avatar_url: Option<String>,
 ) -> AppResult<persons::Model> {
     let name = normalize_person_name(&name)?;
-    let avatar_path = resolve_new_avatar(state.uploads_dir(), &name, avatar, avatar_url).await?;
+    let avatar_path = resolve_new_avatar(
+        state.uploads_dir(),
+        &name,
+        avatar,
+        qq_avatar_url,
+        avatar_url,
+    )
+    .await?;
     let now = Utc::now().fixed_offset();
     let person = persons::ActiveModel {
         name: Set(name),
@@ -519,7 +527,14 @@ pub async fn create_person(
 ) -> AppResult<(StatusCode, Json<PersonAdminItem>)> {
     let _ = require_admin(&session, &state.db).await?;
     let parsed = parse_person_multipart(multipart).await?;
-    let person = insert_person(&state, parsed.name, parsed.avatar, parsed.avatar_url).await?;
+    let person = insert_person(
+        &state,
+        parsed.name,
+        parsed.avatar,
+        parsed.qq_avatar_url,
+        parsed.avatar_url,
+    )
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -551,18 +566,18 @@ pub async fn update_person(
     let mut am: persons::ActiveModel = person.into();
     am.name = Set(name.clone());
 
-    if parsed.avatar.is_some() || parsed.avatar_url.is_some() {
+    if parsed.avatar.is_some() || parsed.qq_avatar_url.is_some() || parsed.avatar_url.is_some() {
         let avatar_path = resolve_new_avatar(
             state.uploads_dir(),
             &name,
             parsed.avatar,
+            parsed.qq_avatar_url,
             parsed.avatar_url,
         )
         .await?;
         am.avatar_path = Set(avatar_path);
         delete_avatar_file(state.uploads_dir(), &old_avatar);
-    } else if is_letter_avatar(&old_avatar) && name_initial(&name) != name_initial(&old_name)
-    {
+    } else if is_letter_avatar(&old_avatar) && name_initial(&name) != name_initial(&old_name) {
         let avatar_path = generate_letter_avatar(state.uploads_dir(), &name).await?;
         am.avatar_path = Set(avatar_path);
         delete_avatar_file(state.uploads_dir(), &old_avatar);
@@ -614,10 +629,9 @@ pub struct CreateQuoteBody {
     pub content: String,
     pub source: Option<String>,
     pub pinned: Option<bool>,
-    pub sort_order: Option<i32>,
     pub published_at: Option<DateTime<FixedOffset>>,
-    pub place_before_id: Option<i64>,
-    pub place_after_id: Option<i64>,
+    pub place_before_id: Option<String>,
+    pub place_after_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -628,10 +642,9 @@ pub struct MoveQuoteBody {
 fn placement_from_body(
     body: &CreateQuoteBody,
     now: DateTime<FixedOffset>,
-) -> (bool, i32, DateTime<FixedOffset>) {
+) -> (bool, DateTime<FixedOffset>) {
     (
         body.pinned.unwrap_or(false),
-        body.sort_order.unwrap_or(0),
         body.published_at.unwrap_or(now),
     )
 }
@@ -651,16 +664,18 @@ pub async fn create_quote(
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
 
     let now = Utc::now().fixed_offset();
-    let (pinned, sort_order, published_at) = placement_from_body(&body, now);
+    let (pinned, published_at) = placement_from_body(&body, now);
     let source = normalize_source(body.source)?;
+    let quote_id = new_quote_id();
     let inserted = quotes::ActiveModel {
+        id: Set(quote_id.clone()),
         person_id: Set(Some(person.id)),
         proposed_person_name: Set(None),
+        proposed_person_avatar_url: Set(None),
         content: Set(content),
         source: Set(source),
         status: Set(quotes::status::APPROVED.to_string()),
         pinned: Set(pinned),
-        sort_order: Set(sort_order),
         published_at: Set(published_at),
         created_at: Set(now),
         reviewed_at: Set(Some(now)),
@@ -669,12 +684,12 @@ pub async fn create_quote(
     }
     .insert(&state.db)
     .await?;
-    place_relative(
+    place_quote(
         &state.db,
-        inserted.id,
+        &quote_id,
         inserted.pinned,
-        body.place_before_id,
-        body.place_after_id,
+        body.place_before_id.clone(),
+        body.place_after_id.clone(),
     )
     .await?;
     let inserted = quotes::Entity::find_by_id(inserted.id)
@@ -700,11 +715,11 @@ pub async fn create_quote(
 pub async fn update_quote(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(body): Json<CreateQuoteBody>,
 ) -> AppResult<Json<AdminQuoteItem>> {
     let _ = require_admin(&session, &state.db).await?;
-    let quote = quotes::Entity::find_by_id(id)
+    let quote = quotes::Entity::find_by_id(id.clone())
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
@@ -716,26 +731,45 @@ pub async fn update_quote(
         .ok_or_else(|| AppError::bad_request("神人不存在"))?;
     let source = normalize_source(body.source)?;
     let pinned = body.pinned.unwrap_or(quote.pinned);
-    let sort_order = body.sort_order.unwrap_or(quote.sort_order);
     let published_at = body.published_at.unwrap_or(quote.published_at);
+    let pinned_changed = pinned != quote.pinned;
+    let time_changed = published_at != quote.published_at;
+    let has_anchor = body.place_before_id.is_some() || body.place_after_id.is_some();
 
-    let mut am: quotes::ActiveModel = quote.into();
+    let mut am: quotes::ActiveModel = quote.clone().into();
     am.person_id = Set(Some(person.id));
     am.proposed_person_name = Set(None);
+    am.proposed_person_avatar_url = Set(None);
     am.content = Set(content);
     am.source = Set(source);
     am.pinned = Set(pinned);
-    am.sort_order = Set(sort_order);
     am.published_at = Set(published_at);
     let updated = am.update(&state.db).await?;
-    place_relative(
-        &state.db,
-        updated.id,
-        updated.pinned,
-        body.place_before_id,
-        body.place_after_id,
-    )
-    .await?;
+
+    if updated.status == quotes::status::APPROVED {
+        if pinned_changed {
+            on_pinned_changed(
+                &state.db,
+                &updated.id,
+                pinned,
+                body.place_before_id.clone(),
+                body.place_after_id.clone(),
+            )
+            .await?;
+        } else if has_anchor {
+            place_quote(
+                &state.db,
+                &updated.id,
+                pinned,
+                body.place_before_id.clone(),
+                body.place_after_id.clone(),
+            )
+            .await?;
+        } else if time_changed {
+            remove_from_chain(&state.db, &updated).await?;
+            crate::services::quote_place::insert_by_time(&state.db, &updated.id).await?;
+        }
+    }
     let updated = quotes::Entity::find_by_id(updated.id)
         .one(&state.db)
         .await?
@@ -756,21 +790,24 @@ pub async fn update_quote(
 pub async fn delete_quote(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     let _ = require_admin(&session, &state.db).await?;
-    let quote = quotes::Entity::find_by_id(id)
+    let quote = quotes::Entity::find_by_id(id.clone())
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
-    quotes::Entity::delete_by_id(quote.id).exec(&state.db).await?;
+    remove_from_chain(&state.db, &quote).await?;
+    quotes::Entity::delete_by_id(quote.id)
+        .exec(&state.db)
+        .await?;
     state.cache.invalidate_quotes();
     Ok(Json(serde_json::json!({ "message": "语录已删除" })))
 }
 
 #[derive(Deserialize)]
 pub struct ReorderQuotesBody {
-    pub ids: Vec<i64>,
+    pub ids: Vec<String>,
 }
 
 pub async fn reorder_quotes(
@@ -787,11 +824,11 @@ pub async fn reorder_quotes(
 pub async fn move_quote(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(body): Json<MoveQuoteBody>,
 ) -> AppResult<Json<AdminQuoteItem>> {
     let _ = require_admin(&session, &state.db).await?;
-    let quote = quotes::Entity::find_by_id(id)
+    let quote = quotes::Entity::find_by_id(id.clone())
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
@@ -806,56 +843,11 @@ pub async fn move_quote(
         _ => return Err(AppError::bad_request("direction 须为 up 或 down")),
     };
 
-    let neighbor = if up {
-        quotes::Entity::find()
-            .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
-            .filter(quotes::Column::Pinned.eq(quote.pinned))
-            .filter(quotes::Column::Id.ne(quote.id))
-            .filter(ranks_before(&quote))
-            .order_by_asc(quotes::Column::SortOrder)
-            .order_by_asc(quotes::Column::PublishedAt)
-            .order_by_asc(quotes::Column::Id)
-            .one(&state.db)
-            .await?
-    } else {
-        quotes::Entity::find()
-            .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
-            .filter(quotes::Column::Pinned.eq(quote.pinned))
-            .filter(quotes::Column::Id.ne(quote.id))
-            .filter(ranks_after(&quote))
-            .order_by_desc(quotes::Column::SortOrder)
-            .order_by_desc(quotes::Column::PublishedAt)
-            .order_by_desc(quotes::Column::Id)
-            .one(&state.db)
-            .await?
-    };
-
-    let Some(neighbor) = neighbor else {
-        return Err(AppError::bad_request(if up {
-            "已经在最前"
-        } else {
-            "已经在最后"
-        }));
-    };
-
-    let mut current_order = quote.sort_order;
-    let mut neighbor_order = neighbor.sort_order;
-    if current_order == neighbor_order {
-        if up {
-            current_order += 1;
-        } else {
-            current_order -= 1;
-        }
-    } else {
-        std::mem::swap(&mut current_order, &mut neighbor_order);
-    }
-
-    let mut current: quotes::ActiveModel = quote.into();
-    current.sort_order = Set(current_order);
-    let updated = current.update(&state.db).await?;
-    let mut other: quotes::ActiveModel = neighbor.into();
-    other.sort_order = Set(neighbor_order);
-    other.update(&state.db).await?;
+    move_in_chain(&state.db, &id, up).await?;
+    let updated = quotes::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::internal("语录移动后丢失"))?;
     state.cache.invalidate_quotes();
 
     let person = if let Some(pid) = updated.person_id {
@@ -872,38 +864,6 @@ pub async fn move_quote(
     };
 
     Ok(Json(admin_quote_item(updated, person, Some("顺序已更新"))))
-}
-
-fn ranks_before(q: &quotes::Model) -> Condition {
-    Condition::any()
-        .add(quotes::Column::SortOrder.gt(q.sort_order))
-        .add(
-            Condition::all()
-                .add(quotes::Column::SortOrder.eq(q.sort_order))
-                .add(quotes::Column::PublishedAt.gt(q.published_at)),
-        )
-        .add(
-            Condition::all()
-                .add(quotes::Column::SortOrder.eq(q.sort_order))
-                .add(quotes::Column::PublishedAt.eq(q.published_at))
-                .add(quotes::Column::Id.gt(q.id)),
-        )
-}
-
-fn ranks_after(q: &quotes::Model) -> Condition {
-    Condition::any()
-        .add(quotes::Column::SortOrder.lt(q.sort_order))
-        .add(
-            Condition::all()
-                .add(quotes::Column::SortOrder.eq(q.sort_order))
-                .add(quotes::Column::PublishedAt.lt(q.published_at)),
-        )
-        .add(
-            Condition::all()
-                .add(quotes::Column::SortOrder.eq(q.sort_order))
-                .add(quotes::Column::PublishedAt.eq(q.published_at))
-                .add(quotes::Column::Id.lt(q.id)),
-        )
 }
 
 pub async fn list_quotes_admin(
@@ -924,10 +884,7 @@ pub async fn list_quotes_admin(
     {
         if status == "unapproved" {
             finder = finder.filter(
-                quotes::Column::Status.is_in([
-                    quotes::status::PENDING,
-                    quotes::status::REJECTED,
-                ]),
+                quotes::Column::Status.is_in([quotes::status::PENDING, quotes::status::REJECTED]),
             );
         } else {
             finder = finder.filter(quotes::Column::Status.eq(status));
@@ -936,42 +893,45 @@ pub async fn list_quotes_admin(
     if let Some(pinned) = query.pinned {
         finder = finder.filter(quotes::Column::Pinned.eq(pinned));
     }
-    if let Some(q) = query
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(q) = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         finder = finder.filter(quote_search_condition(&state.db, q).await?);
     }
 
     let approved = query.status.as_deref() == Some("approved");
     let recent = query.recent.unwrap_or(false);
-    let paginator = if recent {
-        finder
-            .order_by_desc(quotes::Column::PublishedAt)
-            .order_by_desc(quotes::Column::Id)
-            .paginate(&state.db, page_size)
-    } else if query.status.is_none() {
-        finder
-            .order_by_asc(quotes::Column::Status)
-            .order_by_desc(quotes::Column::CreatedAt)
-            .paginate(&state.db, page_size)
-    } else if approved {
-        finder
-            .order_by_desc(quotes::Column::Pinned)
-            .order_by_desc(quotes::Column::SortOrder)
-            .order_by_desc(quotes::Column::PublishedAt)
-            .order_by_desc(quotes::Column::Id)
-            .paginate(&state.db, page_size)
-    } else {
-        finder
-            .order_by_desc(quotes::Column::CreatedAt)
-            .paginate(&state.db, page_size)
-    };
 
-    let total = paginator.num_items().await?;
-    let rows = paginator.fetch_page(page - 1).await?;
+    let (total, rows) = if approved && !recent {
+        let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let ordered = ordered_approved_quotes(&state.db, None, q, query.pinned).await?;
+        let total = ordered.len() as u64;
+        let start = ((page - 1) * page_size) as usize;
+        let end = (start + page_size as usize).min(ordered.len());
+        let slice = if start < ordered.len() {
+            ordered[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        (total, slice)
+    } else {
+        let paginator = if recent {
+            finder
+                .order_by_desc(quotes::Column::PublishedAt)
+                .order_by_desc(quotes::Column::Id)
+                .paginate(&state.db, page_size)
+        } else if query.status.is_none() {
+            finder
+                .order_by_asc(quotes::Column::Status)
+                .order_by_desc(quotes::Column::CreatedAt)
+                .paginate(&state.db, page_size)
+        } else {
+            finder
+                .order_by_desc(quotes::Column::CreatedAt)
+                .paginate(&state.db, page_size)
+        };
+        let total = paginator.num_items().await?;
+        let rows = paginator.fetch_page(page - 1).await?;
+        (total, rows)
+    };
 
     let mut items = Vec::with_capacity(rows.len());
     for q in rows {
@@ -1001,11 +961,11 @@ pub async fn list_quotes_admin(
 pub async fn approve_quote(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     multipart: Multipart,
 ) -> AppResult<Json<AdminQuoteItem>> {
     let admin = require_admin(&session, &state.db).await?;
-    let quote = quotes::Entity::find_by_id(id)
+    let quote = quotes::Entity::find_by_id(id.clone())
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
@@ -1035,24 +995,38 @@ pub async fn approve_quote(
                         .filter(|s| !s.is_empty())
                 })
                 .ok_or_else(|| AppError::bad_request("缺少神人信息，无法通过审核"))?;
-            let person = insert_person(&state, name, parsed.avatar, parsed.avatar_url).await?;
+            let fallback_avatar_url = if parsed.avatar.is_none()
+                && parsed.qq_avatar_url.is_none()
+                && parsed.avatar_url.is_none()
+            {
+                quote.proposed_person_avatar_url.clone()
+            } else {
+                parsed.avatar_url
+            };
+            let person = insert_person(
+                &state,
+                name,
+                parsed.avatar,
+                parsed.qq_avatar_url,
+                fallback_avatar_url,
+            )
+            .await?;
             person_id = Some(person.id);
         }
     }
 
     let now = Utc::now().fixed_offset();
-    let place_before = quote.place_before_id;
-    let place_after = quote.place_after_id;
+    let intent_before = quote.place_before_id.clone();
+    let intent_after = quote.place_after_id.clone();
     let pinned = quote.pinned;
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(person_id);
+    am.proposed_person_avatar_url = Set(None);
     am.status = Set(quotes::status::APPROVED.to_string());
-    am.place_before_id = Set(None);
-    am.place_after_id = Set(None);
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
-    place_relative(&state.db, updated.id, pinned, place_before, place_after).await?;
+    place_quote(&state.db, &updated.id, pinned, intent_before, intent_after).await?;
     let updated = quotes::Entity::find_by_id(updated.id)
         .one(&state.db)
         .await?
@@ -1080,17 +1054,18 @@ pub async fn approve_quote(
 pub struct ApproveJsonBody {
     pub person_id: Option<i64>,
     pub create_person_name: Option<String>,
+    pub qq: Option<String>,
     pub avatar_url: Option<String>,
 }
 
 pub async fn approve_quote_json(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     body: Option<Json<ApproveJsonBody>>,
 ) -> AppResult<Json<AdminQuoteItem>> {
     let admin = require_admin(&session, &state.db).await?;
-    let quote = quotes::Entity::find_by_id(id)
+    let quote = quotes::Entity::find_by_id(id.clone())
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::not_found("言论不存在"))?;
@@ -1126,26 +1101,29 @@ pub async fn approve_quote_json(
                 .ok_or_else(|| AppError::bad_request("缺少神人信息，无法通过审核"))?;
             let avatar_url = match body.as_ref().and_then(|b| b.avatar_url.as_deref()) {
                 Some(raw) => parse_avatar_url(raw)?,
+                None => quote.proposed_person_avatar_url.clone(),
+            };
+            let qq_url = match body.as_ref().and_then(|b| b.qq.as_deref()) {
+                Some(raw) => qq_avatar_url(raw)?,
                 None => None,
             };
-            let person = insert_person(&state, name, None, avatar_url).await?;
+            let person = insert_person(&state, name, None, qq_url, avatar_url).await?;
             person_id = Some(person.id);
         }
     }
 
     let now = Utc::now().fixed_offset();
-    let place_before = quote.place_before_id;
-    let place_after = quote.place_after_id;
+    let intent_before = quote.place_before_id.clone();
+    let intent_after = quote.place_after_id.clone();
     let pinned = quote.pinned;
     let mut am: quotes::ActiveModel = quote.into();
     am.person_id = Set(person_id);
+    am.proposed_person_avatar_url = Set(None);
     am.status = Set(quotes::status::APPROVED.to_string());
-    am.place_before_id = Set(None);
-    am.place_after_id = Set(None);
     am.reviewed_at = Set(Some(now));
     am.reviewed_by = Set(Some(admin.id));
     let updated = am.update(&state.db).await?;
-    place_relative(&state.db, updated.id, pinned, place_before, place_after).await?;
+    place_quote(&state.db, &updated.id, pinned, intent_before, intent_after).await?;
     let updated = quotes::Entity::find_by_id(updated.id)
         .one(&state.db)
         .await?
@@ -1171,7 +1149,7 @@ pub async fn approve_quote_json(
 pub async fn reject_quote(
     State(state): State<AppState>,
     session: Session,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> AppResult<Json<AdminQuoteItem>> {
     let admin = require_admin(&session, &state.db).await?;
     let quote = quotes::Entity::find_by_id(id)

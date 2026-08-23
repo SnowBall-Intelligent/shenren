@@ -16,6 +16,7 @@ pub type AvatarFile = (Option<String>, Vec<u8>);
 pub struct PersonMultipart {
     pub name: String,
     pub avatar: Option<AvatarFile>,
+    pub qq_avatar_url: Option<String>,
     pub avatar_url: Option<String>,
 }
 
@@ -23,6 +24,7 @@ pub struct ApproveMultipart {
     pub person_id: Option<i64>,
     pub create_person_name: Option<String>,
     pub avatar: Option<AvatarFile>,
+    pub qq_avatar_url: Option<String>,
     pub avatar_url: Option<String>,
 }
 
@@ -97,16 +99,36 @@ pub fn parse_avatar_url(raw: &str) -> AppResult<Option<String>> {
     Ok(Some(s.to_string()))
 }
 
+pub fn qq_avatar_url(raw: &str) -> AppResult<Option<String>> {
+    let qq = raw.trim();
+    if qq.is_empty() {
+        return Ok(None);
+    }
+    if !(5..=20).contains(&qq.len())
+        || qq.starts_with('0')
+        || !qq.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(AppError::bad_request("QQ 号须为 5–20 位非零开头数字"));
+    }
+    Ok(Some(format!(
+        "https://q2.qlogo.cn/headimg_dl?dst_uin={qq}&spec=0"
+    )))
+}
+
 /// File upload wins over URL; otherwise generate a first-character SVG.
 pub async fn resolve_new_avatar(
     uploads_dir: &Path,
     name: &str,
     avatar: Option<AvatarFile>,
+    qq_avatar_url: Option<String>,
     avatar_url: Option<String>,
 ) -> AppResult<String> {
     if let Some((filename, data)) = avatar {
         return save_avatar_from_multipart_field(uploads_dir, "avatar", filename.as_deref(), &data)
             .await;
+    }
+    if let Some(url) = qq_avatar_url {
+        return Ok(url);
     }
     if let Some(url) = avatar_url {
         return Ok(url);
@@ -155,6 +177,7 @@ fn xml_escape_char(c: char) -> String {
 pub async fn parse_person_multipart(mut multipart: Multipart) -> AppResult<PersonMultipart> {
     let mut name: Option<String> = None;
     let mut avatar: Option<AvatarFile> = None;
+    let mut qq_avatar_url_value: Option<String> = None;
     let mut avatar_url: Option<String> = None;
 
     while let Some(field) = multipart
@@ -178,6 +201,13 @@ pub async fn parse_person_multipart(mut multipart: Multipart) -> AppResult<Perso
                     .map_err(|e| AppError::bad_request(format!("读取头像 URL 失败: {e}")))?;
                 avatar_url = parse_avatar_url(&text)?;
             }
+            "qq" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::bad_request(format!("读取 QQ 号失败: {e}")))?;
+                qq_avatar_url_value = qq_avatar_url(&text)?;
+            }
             "avatar" => {
                 let filename = field.file_name().map(|s| s.to_string());
                 let data = field
@@ -198,6 +228,7 @@ pub async fn parse_person_multipart(mut multipart: Multipart) -> AppResult<Perso
     Ok(PersonMultipart {
         name,
         avatar,
+        qq_avatar_url: qq_avatar_url_value,
         avatar_url,
     })
 }
@@ -206,6 +237,7 @@ pub async fn parse_approve_multipart(mut multipart: Multipart) -> AppResult<Appr
     let mut person_id: Option<i64> = None;
     let mut create_person_name: Option<String> = None;
     let mut avatar: Option<AvatarFile> = None;
+    let mut qq_avatar_url_value: Option<String> = None;
     let mut avatar_url: Option<String> = None;
 
     while let Some(field) = multipart
@@ -245,6 +277,13 @@ pub async fn parse_approve_multipart(mut multipart: Multipart) -> AppResult<Appr
                     .map_err(|e| AppError::bad_request(format!("读取头像 URL 失败: {e}")))?;
                 avatar_url = parse_avatar_url(&text)?;
             }
+            "qq" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::bad_request(format!("读取 QQ 号失败: {e}")))?;
+                qq_avatar_url_value = qq_avatar_url(&text)?;
+            }
             "avatar" => {
                 let filename = field.file_name().map(|s| s.to_string());
                 let data = field
@@ -263,6 +302,7 @@ pub async fn parse_approve_multipart(mut multipart: Multipart) -> AppResult<Appr
         person_id,
         create_person_name,
         avatar,
+        qq_avatar_url: qq_avatar_url_value,
         avatar_url,
     })
 }

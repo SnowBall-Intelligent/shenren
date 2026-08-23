@@ -22,7 +22,7 @@ export default defineConfig({
       cwd: root,
       url: `${API}/api/site`,
       timeout: 180_000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
     },
     ...(process.env.CI
       ? [
@@ -46,6 +46,8 @@ export default defineConfig({
     {
       name: 'api',
       testDir: './api',
+      fullyParallel: false,
+      workers: 1,
       use: {
         baseURL: API,
         extraHTTPHeaders: { Origin: WEB },

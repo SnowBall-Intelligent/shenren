@@ -218,10 +218,7 @@ fn etag_for(body: &[u8]) -> String {
 }
 
 fn hex_16(bytes: &[u8]) -> String {
-    bytes[..16]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    bytes[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn touch_lru<K: Clone + Eq>(lru: &mut VecDeque<K>, key: &K) {

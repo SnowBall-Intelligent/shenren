@@ -200,10 +200,10 @@ export default function QuoteCreateDialog({
             onPublishedAtChange={setPublishedAt}
             keepOrderHint={
               editing
-                ? '默认最近 10 条，可搜索神人或内容。不选则保持现在的前后关系。'
-                : '默认最近 10 条，可搜索神人或内容。不选则按发布时间排。'
+                ? '默认展示前 10 条，可搜索神人或内容。不选则按发布时间重新插入。'
+                : '默认展示前 10 条，可搜索神人或内容。不选则按发布时间插入现有顺序。'
             }
-            publishedHint="可填过去或未来；未来时间也会立刻出现在首页。"
+            publishedHint="可填过去或未来；不选手动插位时按此时间插入。"
           />
         </Box>
       </DialogContent>

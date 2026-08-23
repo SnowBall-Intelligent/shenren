@@ -57,7 +57,7 @@ export default function QuotePlaceFields({
 }: {
   source: 'public' | 'admin'
   enabled?: boolean
-  excludeId?: number
+  excludeId?: string
   pinnedOnly?: boolean
   anchor: Quote | null
   onAnchorChange: (q: Quote | null) => void
@@ -98,12 +98,10 @@ export default function QuotePlaceFields({
               page_size: pageSize,
               q,
               pinned: pinnedOnly,
-              recent: true,
             })
           : publicApi.getQuotes(1, pageSize, undefined, {
               q,
               pinned: pinnedOnly,
-              recent: true,
             })
       req
         .then((d) => {
@@ -190,7 +188,7 @@ export default function QuotePlaceFields({
             {...params}
             label={place === 'before' ? '插在哪条前面' : '插在哪条后面'}
             placeholder="搜索神人或内容"
-            helperText={keepOrderHint ?? '默认最近 10 条；不选则按发布时间排。'}
+            helperText={keepOrderHint ?? '默认展示前 10 条；不选则按发布时间插入现有顺序。'}
             slotProps={{
               ...params.slotProps,
               input: {
@@ -219,7 +217,7 @@ export default function QuotePlaceFields({
         type="datetime-local"
         value={publishedAt}
         onChange={(e) => onPublishedAtChange(e.target.value)}
-        helperText={publishedHint ?? '可填过去或未来；通过后会按此时间参与排序。'}
+        helperText={publishedHint ?? '可填过去或未来；不选手动插位时按此时间插入。'}
         slotProps={{ inputLabel: { shrink: true } }}
       />
     </>

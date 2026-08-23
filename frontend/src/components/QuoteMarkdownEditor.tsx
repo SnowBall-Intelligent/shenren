@@ -33,7 +33,6 @@ import { normalizePersons, publicApi } from '../api'
 import type { Person, Quote } from '../api/types'
 import { nameInitial, uploadUrl } from '../api/client'
 import QuoteMarkdown from './QuoteMarkdown'
-import { BUBBLE_BG, BUBBLE_TEXT } from '../theme'
 
 const EMPTY_PERSONS: Person[] = []
 
@@ -234,8 +233,8 @@ export default function QuoteMarkdownEditor({
         <Box
           sx={{
             mt: 1.25,
-            bgcolor: BUBBLE_BG,
-            color: BUBBLE_TEXT,
+            bgcolor: (theme) => theme.palette.mode === 'dark' ? '#2c2c2c' : '#e9eef5',
+            color: 'text.primary',
             borderRadius: 1,
             px: 1.5,
             py: 1.25,
@@ -420,7 +419,8 @@ function InsertQuoteDialog({
                 sx={{
                   maxHeight: 220,
                   overflow: 'auto',
-                  border: '1px solid #2a2a2a',
+                  border: '1px solid',
+                  borderColor: 'divider',
                   borderRadius: 1,
                 }}
               >
@@ -440,7 +440,8 @@ function InsertQuoteDialog({
                       px: 1.25,
                       py: 1,
                       cursor: 'pointer',
-                      borderBottom: '1px solid #2a2a2a',
+                      borderBottom: '1px solid',
+                      borderBottomColor: 'divider',
                       bgcolor: selectedQuote?.id === q.id ? 'action.selected' : 'transparent',
                       '&:hover': { bgcolor: 'action.hover' },
                       '&:last-child': { borderBottom: 0 },

@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 mkdirSync(path.join(root, 'e2e/.tmp/uploads'), { recursive: true })
+const cargoTargetDir = path.join(root, 'e2e/.tmp/cargo-target')
+const apiUrl = new URL(process.env.E2E_API_URL ?? 'http://127.0.0.1:3000')
+const bindHost = apiUrl.hostname.includes(':') ? `[${apiUrl.hostname}]` : apiUrl.hostname
+const bindAddr = `${bindHost}:${apiUrl.port || (apiUrl.protocol === 'https:' ? '443' : '80')}`
 
 const child = spawn('cargo', ['run', '--manifest-path', 'backend/Cargo.toml'], {
   cwd: root,
@@ -12,9 +16,10 @@ const child = spawn('cargo', ['run', '--manifest-path', 'backend/Cargo.toml'], {
   shell: process.platform === 'win32',
   env: {
     ...process.env,
+    CARGO_TARGET_DIR: cargoTargetDir,
     DATABASE_URL: 'sqlite://e2e/.tmp/shenren.db?mode=rwc',
     UPLOADS_DIR: 'e2e/.tmp/uploads',
-    BIND_ADDR: '127.0.0.1:3000',
+    BIND_ADDR: bindAddr,
     COOKIE_SECURE: 'false',
     COOKIE_SAMESITE: 'Lax',
     // CI + retries hit /login and /submissions far more than production defaults.

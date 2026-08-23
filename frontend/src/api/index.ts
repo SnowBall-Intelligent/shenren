@@ -11,6 +11,8 @@ import type {
   SiteInfo,
   SiteSettingsUpdate,
   SubmissionPayload,
+  ApiKey,
+  ApiKeyWrite,
 } from './types'
 
 export const publicApi = {
@@ -40,7 +42,7 @@ export const publicApi = {
   },
 
   submit: (payload: SubmissionPayload) =>
-    apiJson<{ id: number; status?: string; message?: string }>('/api/submissions', {
+    apiJson<{ id: string; status?: string; message?: string }>('/api/submissions', {
       method: 'POST',
       body: payload,
     }),
@@ -91,10 +93,11 @@ export const adminApi = {
   },
 
   approveQuote: (
-    id: number,
+    id: string,
     body?: {
       person_id?: number
       create_person_name?: string
+      qq?: string
       avatar_url?: string
     },
   ) =>
@@ -104,31 +107,31 @@ export const adminApi = {
     }),
 
   /** Approve while uploading a new person avatar (multipart). */
-  approveQuoteWithAvatar: (id: number, form: FormData) =>
+  approveQuoteWithAvatar: (id: string, form: FormData) =>
     apiForm<Quote>(`/api/admin/quotes/${id}/approve`, form),
 
-  rejectQuote: (id: number) =>
+  rejectQuote: (id: string) =>
     apiJson<Quote>(`/api/admin/quotes/${id}/reject`, { method: 'POST', body: {} }),
 
   createQuote: (body: QuoteWrite) =>
     apiJson<Quote & { message?: string }>('/api/admin/quotes', { method: 'POST', body }),
 
-  updateQuote: (id: number, body: QuoteWrite) =>
+  updateQuote: (id: string, body: QuoteWrite) =>
     apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}`, { method: 'PUT', body }),
 
-  moveQuote: (id: number, direction: 'up' | 'down') =>
+  moveQuote: (id: string, direction: 'up' | 'down') =>
     apiJson<Quote & { message?: string }>(`/api/admin/quotes/${id}/move`, {
       method: 'POST',
       body: { direction },
     }),
 
-  reorderQuotes: (ids: number[]) =>
+  reorderQuotes: (ids: string[]) =>
     apiJson<{ message?: string }>('/api/admin/quotes/reorder', {
       method: 'POST',
       body: { ids },
     }),
 
-  deleteQuote: (id: number) =>
+  deleteQuote: (id: string) =>
     apiJson<{ message?: string }>(`/api/admin/quotes/${id}`, { method: 'DELETE' }),
 
   // Persons
@@ -169,6 +172,20 @@ export const adminApi = {
 
   deleteAdmin: (id: number) =>
     apiJson<void>(`/api/admin/admins/${id}`, { method: 'DELETE' }),
+
+  listApiKeys: () => apiJson<ApiKey[]>('/api/admin/api-keys'),
+
+  createApiKey: (body: ApiKeyWrite) =>
+    apiJson<ApiKey>('/api/admin/api-keys', { method: 'POST', body }),
+
+  updateApiKey: (id: number, body: ApiKeyWrite) =>
+    apiJson<ApiKey>(`/api/admin/api-keys/${id}`, { method: 'PUT', body }),
+
+  resetApiKeyUsage: (id: number) =>
+    apiJson<ApiKey>(`/api/admin/api-keys/${id}/reset-usage`, { method: 'POST', body: {} }),
+
+  deleteApiKey: (id: number) =>
+    apiJson<{ message: string }>(`/api/admin/api-keys/${id}`, { method: 'DELETE' }),
 }
 
 export function normalizeAdmins(data: Admin[] | { items: Admin[] }): Admin[] {

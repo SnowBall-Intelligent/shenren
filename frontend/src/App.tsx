@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material'
-import { theme } from './theme'
+import { Box, CircularProgress } from '@mui/material'
 import PublicLayout from './layouts/PublicLayout'
 import HomePage from './pages/HomePage'
 import { ToastProvider } from './components/AppToast'
+import { ThemeModeProvider } from './components/ThemeModeProvider'
 
 const AdminLayout = lazy(() => import('./layouts/AdminLayout'))
 const SetupPage = lazy(() => import('./pages/admin/SetupPage'))
@@ -14,6 +14,7 @@ const PersonsPage = lazy(() => import('./pages/admin/PersonsPage'))
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'))
 const CaptchaSettingsPage = lazy(() => import('./pages/admin/CaptchaSettingsPage'))
 const AdminsPage = lazy(() => import('./pages/admin/AdminsPage'))
+const ApiKeysPage = lazy(() => import('./pages/admin/ApiKeysPage'))
 
 function RouteFallback() {
   return (
@@ -25,8 +26,7 @@ function RouteFallback() {
 
 export default function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <ThemeModeProvider>
       <ToastProvider>
       <BrowserRouter>
         <Suspense fallback={<RouteFallback />}>
@@ -49,6 +49,7 @@ export default function App() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/captcha" element={<CaptchaSettingsPage />} />
             <Route path="admins" element={<AdminsPage />} />
+            <Route path="api-keys" element={<ApiKeysPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -56,6 +57,6 @@ export default function App() {
         </Suspense>
       </BrowserRouter>
       </ToastProvider>
-    </ThemeProvider>
+    </ThemeModeProvider>
   )
 }

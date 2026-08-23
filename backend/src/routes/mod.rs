@@ -1,4 +1,6 @@
 pub mod admin;
+pub mod api_keys;
+pub mod external;
 pub mod public;
 
 use std::net::SocketAddr;
@@ -13,7 +15,7 @@ use axum::{Json, Router};
 use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tower_sessions::cookie::SameSite;
@@ -32,9 +34,9 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
         .with_same_site(config.cookie_same_site)
         .with_secure(config.cookie_secure || config.cookie_same_site == SameSite::None)
         .with_path("/")
-        .with_expiry(Expiry::OnInactivity(
-            time::Duration::seconds(config.session_ttl_secs as i64),
-        ));
+        .with_expiry(Expiry::OnInactivity(time::Duration::seconds(
+            config.session_ttl_secs as i64,
+        )));
 
     let public_api = Router::new()
         .route("/site", get(public::get_site))
@@ -43,18 +45,25 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
         .route("/submissions", post(public::create_submission));
 
     let admin_api = admin_routes()
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            admin_csrf_mw,
-        ))
+        .layer(middleware::from_fn_with_state(state.clone(), admin_csrf_mw))
         .layer(session_layer);
 
-    let api = Router::new()
+    let legacy_api = Router::new()
         .merge(public_api)
         .nest("/admin", admin_api)
-        .layer(DefaultBodyLimit::max(6 * 1024 * 1024));
+        .layer(DefaultBodyLimit::max(6 * 1024 * 1024))
+        .layer(cors_layer(config));
 
-    let uploads = ServeDir::new(state.uploads_dir().clone());
+    let external_api = Router::new()
+        .route("/quotes", get(external::list_quotes))
+        .route("/quotes/random", get(external::random_quote))
+        .layer(external_cors_layer());
+
+    let api = Router::new().merge(legacy_api).nest("/v1", external_api);
+
+    let uploads = Router::new()
+        .nest_service("/uploads", ServeDir::new(state.uploads_dir().clone()))
+        .layer(cors_layer(config));
 
     tracing::info!("API-only mode; frontend is not served");
 
@@ -63,7 +72,7 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
 
     Router::new()
         .nest("/api", api)
-        .nest_service("/uploads", uploads)
+        .merge(uploads)
         .fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
@@ -71,10 +80,7 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
             )
         })
         .layer(middleware::from_fn(uploads_and_security_headers))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit_mw,
-        ))
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit_mw))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(
@@ -105,7 +111,6 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
                 .layer(tower::timeout::TimeoutLayer::new(timeout))
                 .layer(tower::limit::ConcurrencyLimitLayer::new(concurrency)),
         )
-        .layer(cors_layer(config))
         .with_state(state)
 }
 
@@ -118,6 +123,12 @@ fn admin_routes() -> Router<AppState> {
         .route("/me", get(admin::me))
         .route("/admins", get(admin::list_admins).post(admin::create_admin))
         .route("/admins/{id}", delete(admin::delete_admin))
+        .route("/api-keys", get(api_keys::list).post(api_keys::create))
+        .route(
+            "/api-keys/{id}",
+            put(api_keys::update).delete(api_keys::delete),
+        )
+        .route("/api-keys/{id}/reset-usage", post(api_keys::reset_usage))
         .route(
             "/settings",
             get(admin::get_settings).put(admin::update_settings),
@@ -149,6 +160,21 @@ fn admin_routes() -> Router<AppState> {
         .route("/quotes/{id}/reject", post(admin::reject_quote))
 }
 
+fn external_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::OPTIONS])
+        .allow_headers([header::AUTHORIZATION, header::ACCEPT])
+        .expose_headers([
+            header::RETRY_AFTER,
+            header::HeaderName::from_static("x-ratelimit-limit"),
+            header::HeaderName::from_static("x-ratelimit-remaining"),
+            header::HeaderName::from_static("x-ratelimit-reset"),
+            header::HeaderName::from_static("x-quota-limit"),
+            header::HeaderName::from_static("x-quota-remaining"),
+        ])
+}
+
 fn cors_layer(config: &Config) -> CorsLayer {
     let extra: Vec<HeaderValue> = config
         .cors_origins
@@ -170,11 +196,7 @@ fn cors_layer(config: &Config) -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-            header::IF_NONE_MATCH,
-        ])
+        .allow_headers([header::CONTENT_TYPE, header::ACCEPT, header::IF_NONE_MATCH])
         .expose_headers([header::ETAG, header::RETRY_AFTER])
         .allow_credentials(true)
 }

@@ -34,11 +34,11 @@ export async function createApprovedQuote(
   request: APIRequestContext,
   personId: number,
   content: string,
-): Promise<number> {
+): Promise<string> {
   const res = await request.post('/api/admin/quotes', {
     data: { person_id: personId, content },
   })
   expect(res.status(), await res.text()).toBe(201)
-  const body = (await res.json()) as { id: number }
+  const body = (await res.json()) as { id: string }
   return body.id
 }

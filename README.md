@@ -101,6 +101,8 @@ npm run dev
 - 前台：`npm --prefix frontend run dev`（`VITE_API_URL` 为空时，`/api` 与 `/uploads` proxy 到 `127.0.0.1:3000`）
 - 后台：`watchexec -e rs,toml -r --cwd backend cargo run`（只提供 API，不返回 HTML）
 
+前台与管理后台均支持跟随系统、浅色和深色三种外观模式。默认跟随系统，手动选择会保存在浏览器中；原有深色外观作为夜间模式保留。
+
 ### 前端环境变量
 
 Vite 会在**构建时**写入 `VITE_*`（Cloudflare Pages 在项目环境变量里设置即可覆盖）。
@@ -165,15 +167,60 @@ npm test
 
 镜像：`ghcr.io/<owner>/<repo>`。手动运行可取消「Use Compose MySQL」以跳过探测。
 
-## 公开 API
+## 站点 API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/site` | 站点信息（含 `allow_propose_person`） |
-| GET | `/api/quotes?page=&page_size=` | 已通过言论（新→旧） |
+| GET | `/api/quotes?page=&page_size=` | 已通过言论（与首页展示顺序一致） |
 | GET | `/api/persons` | 神人列表（投稿下拉） |
 | POST | `/api/submissions` | 投稿（按 IP 内存限流） |
 | GET | `/uploads/...` | 头像静态文件 |
+
+投稿提出新神人时可传 `proposed_person_qq`。管理端创建或更新神人、审核时可在 multipart 中传 `qq`，JSON 审核也支持 `qq`。服务端只保存以下 QQ 头像 CDN 链接，不保存 QQ 号，也不会下载头像文件：
+
+```text
+https://q2.qlogo.cn/headimg_dl?dst_uin=<QQ>&spec=0
+```
+
+## 外部语录 API v1
+
+外部 API 使用管理后台生成的 API Key，调用时通过 `Authorization: Bearer <key>` 传入。完整 Key 只在创建响应中显示一次，数据库仅保存 SHA-256 哈希和前缀。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/quotes` | 按首页顺序分页获取已通过语录 |
+| GET | `/api/v1/quotes/random` | 随机获取一条已通过语录；无匹配项时返回 `404` |
+
+分页接口参数：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `page` | `1` | 从 1 开始 |
+| `page_size` | `20` | 1-100 |
+| `from` | 无 | RFC3339 时间，包含边界，按 `published_at` 筛选 |
+| `to` | 无 | RFC3339 时间，包含边界，按 `published_at` 筛选 |
+| `person_id` | 无 | 为后续版本预留；v1 传入会明确返回 `400` |
+
+随机接口支持相同的 `from`、`to` 和预留 `person_id` 参数。
+
+```bash
+curl -H "Authorization: Bearer srk_xxx" \
+  "https://api.example.com/api/v1/quotes?page=1&page_size=20"
+
+curl -H "Authorization: Bearer srk_xxx" \
+  "https://api.example.com/api/v1/quotes/random?from=2026-01-01T00%3A00%3A00Z"
+```
+
+每个 Key 可独立设置：
+
+- 滑动窗口频率 `N / window_seconds`，留空表示不限。
+- 总额度，留空表示无限；使用量持久化到数据库，可由管理员重置。
+- IP 白名单，支持精确 IP 和 CIDR。
+- 来源域名白名单，按 hostname 匹配并忽略协议、端口、大小写和末尾点；`example.com` 精确匹配，`*.example.com` 只匹配子域。
+- 单实例并发上限。频率与并发状态保存在当前进程内，多实例部署时各实例独立计算。
+
+响应可能包含 `X-RateLimit-Limit`、`X-RateLimit-Remaining`、`X-RateLimit-Reset`、`X-Quota-Limit` 和 `X-Quota-Remaining`。触发限制时返回 `429`，频率或并发限制还会尽可能返回 `Retry-After`。
 
 ## 管理 API
 
@@ -184,6 +231,8 @@ npm test
 | POST | `/api/admin/login` / `logout` | Cookie Session（HttpOnly + SameSite=Lax） |
 | GET | `/api/admin/me` | 当前管理员 |
 | CRUD | `/api/admin/persons` | 神人（multipart 头像） |
+| CRUD | `/api/admin/api-keys` | 外部 API Key 与限制配置 |
+| POST | `/api/admin/api-keys/:id/reset-usage` | 重置 Key 的持久化使用量 |
 | GET/PUT | `/api/admin/settings` | 站点配置 |
 | CRUD | `/api/admin/admins` | 管理员（不可删光最后一个；删自己时若仍有他人则允许并注销） |
 | GET | `/api/admin/quotes` | 审核列表 |

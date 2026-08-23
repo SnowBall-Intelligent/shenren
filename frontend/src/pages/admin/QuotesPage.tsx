@@ -38,7 +38,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import { adminApi, normalizePersons, publicApi } from '../../api'
 import type { Person, Quote } from '../../api/types'
-import { ApiError, nameInitial, uploadUrl } from '../../api/client'
+import { ApiError, nameInitial, qqAvatarUrl, uploadUrl } from '../../api/client'
 import QuoteMarkdown from '../../components/QuoteMarkdown'
 import QuoteCreateDialog from './QuoteCreateDialog'
 import { useToast } from '../../components/AppToast'
@@ -86,7 +86,7 @@ export default function QuotesPage({ variant }: { variant: 'review' | 'list' }) 
       .catch(() => setPersons([]))
   }, [])
 
-  const handleReject = async (id: number) => {
+  const handleReject = async (id: string) => {
     try {
       await adminApi.rejectQuote(id)
       await load(page)
@@ -277,7 +277,7 @@ function SortableQuoteCard({
   draggable,
   children,
 }: {
-  id: number
+  id: string
   draggable: boolean
   children: ReactNode
 }) {
@@ -297,7 +297,8 @@ function SortableQuoteCard({
         p: 2,
         bgcolor: 'background.paper',
         borderRadius: 2,
-        border: '1px solid #2a2a2a',
+        border: '1px solid',
+        borderColor: 'divider',
         display: 'flex',
         gap: 1,
       }}
@@ -342,6 +343,7 @@ function ApproveDialog({
   const [name, setName] = useState('')
   const [avatar, setAvatar] = useState<File | null>(null)
   const [avatarUrl, setAvatarUrl] = useState('')
+  const [qq, setQq] = useState('')
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -352,6 +354,7 @@ function ApproveDialog({
       setPerson(null)
       setAvatar(null)
       setAvatarUrl('')
+      setQq('')
       setFormError(null)
       setMode('create')
     }
@@ -367,7 +370,9 @@ function ApproveDialog({
     return () => URL.revokeObjectURL(url)
   }, [avatar])
 
-  const previewSrc = previewObjectUrl ?? (avatarUrl.trim() || undefined)
+  const previewSrc = previewObjectUrl
+    ?? qqAvatarUrl(qq)
+    ?? (avatarUrl.trim() || uploadUrl(quote?.proposed_person_avatar_url))
 
   const submit = async () => {
     if (!quote) return
@@ -386,6 +391,10 @@ function ApproveDialog({
         setFormError('头像 URL 须以 http:// 或 https:// 开头')
         return
       }
+      if (qq.trim() && !qqAvatarUrl(qq)) {
+        setFormError('请输入 5-20 位、首位不为 0 的 QQ 号')
+        return
+      }
     }
     setBusy(true)
     try {
@@ -399,6 +408,7 @@ function ApproveDialog({
       } else {
         await adminApi.approveQuote(quote.id, {
           create_person_name: name.trim(),
+          qq: qq.trim() || undefined,
           avatar_url: avatarUrl.trim() || undefined,
         })
       }
@@ -471,16 +481,36 @@ function ApproveDialog({
                 accept="image/*"
                 onChange={(e) => {
                   setAvatar(e.target.files?.[0] ?? null)
-                  if (e.target.files?.[0]) setAvatarUrl('')
+                  if (e.target.files?.[0]) {
+                    setAvatarUrl('')
+                    setQq('')
+                  }
                 }}
               />
             </Button>
+            <TextField
+              label="QQ 号获取头像（可选）"
+              value={qq}
+              onChange={(e) => {
+                setQq(e.target.value.replace(/\D/g, '').slice(0, 20))
+                if (e.target.value.trim()) {
+                  setAvatar(null)
+                  setAvatarUrl('')
+                }
+              }}
+              fullWidth
+              helperText="将保存 QQ 头像 CDN 链接，不保存 QQ 号。"
+              slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+            />
             <TextField
               label="头像 URL（可选）"
               value={avatarUrl}
               onChange={(e) => {
                 setAvatarUrl(e.target.value)
-                if (e.target.value.trim()) setAvatar(null)
+                if (e.target.value.trim()) {
+                  setAvatar(null)
+                  setQq('')
+                }
               }}
               fullWidth
               placeholder="https://"

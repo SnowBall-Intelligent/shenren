@@ -13,6 +13,7 @@ import {
 import { publicApi } from '../api'
 import type { SiteInfo } from '../api/types'
 import { uploadUrl } from '../api/client'
+import ThemeModeButton from '../components/ThemeModeButton'
 
 const SubmitDialog = lazy(() => import('../components/SubmitDialog'))
 
@@ -77,7 +78,11 @@ export default function PublicLayout() {
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
-      <AppBar position="sticky" elevation={0} sx={{ bgcolor: '#1a1a1a', borderBottom: '1px solid #2a2a2a' }}>
+      <AppBar
+        position="sticky"
+        elevation={0}
+        sx={{ bgcolor: 'background.paper', color: 'text.primary', borderBottom: 1, borderColor: 'divider' }}
+      >
         <Toolbar sx={{ maxWidth: 720, width: '100%', mx: 'auto', gap: 1 }}>
           <Box
             component={RouterLink}
@@ -94,6 +99,7 @@ export default function PublicLayout() {
           <Button color="inherit" size="small" onClick={() => setSubmitOpen(true)}>
             投稿
           </Button>
+          <ThemeModeButton />
         </Toolbar>
       </AppBar>
 

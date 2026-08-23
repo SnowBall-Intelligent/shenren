@@ -21,7 +21,7 @@ import QuoteMarkdownEditor from './QuoteMarkdownEditor'
 import QuotePlaceFields, { fromDatetimeLocal, toDatetimeLocal } from './QuotePlaceFields'
 import CaptchaWidget, { publicCaptchaList } from './CaptchaWidget'
 import { useToast } from './AppToast'
-import { ApiError, nameInitial, uploadUrl } from '../api/client'
+import { ApiError, nameInitial, qqAvatarUrl, uploadUrl } from '../api/client'
 
 type Mode = 'existing' | 'propose'
 
@@ -43,6 +43,7 @@ export default function SubmitDialog({
   const [mode, setMode] = useState<Mode>('existing')
   const [person, setPerson] = useState<Person | null>(null)
   const [proposedName, setProposedName] = useState('')
+  const [proposedQq, setProposedQq] = useState('')
   const [content, setContent] = useState('')
   const [source, setSource] = useState('')
   const [anchor, setAnchor] = useState<Quote | null>(null)
@@ -123,11 +124,16 @@ export default function SubmitDialog({
       toast.error('发布时间无效')
       return
     }
+    if (mode === 'propose' && proposedQq.trim() && !qqAvatarUrl(proposedQq)) {
+      toast.error('请输入 5-20 位、首位不为 0 的 QQ 号')
+      return
+    }
     setSubmitting(true)
     try {
       const data = await publicApi.submit({
         person_id: mode === 'existing' ? person!.id : null,
         proposed_person_name: mode === 'propose' ? proposedName.trim() : null,
+        proposed_person_qq: mode === 'propose' ? proposedQq.trim() || null : null,
         content: content.trim(),
         source: source.trim() || null,
         published_at: published,
@@ -139,6 +145,7 @@ export default function SubmitDialog({
       setContent('')
       setSource('')
       setProposedName('')
+      setProposedQq('')
       setPerson(null)
       setCaptcha(null)
       onClose()
@@ -220,14 +227,27 @@ export default function SubmitDialog({
                 />
               </Box>
             ) : (
-              <TextField
-                label="新神人名称"
-                required
-                value={proposedName}
-                onChange={(e) => setProposedName(e.target.value)}
-                helperText="审核通过后会建立神人档案；未提供头像时使用名称首字生成"
-                slotProps={{ htmlInput: { maxLength: 64 } }}
-              />
+              <Stack spacing={2}>
+                <TextField
+                  label="新神人名称"
+                  required
+                  value={proposedName}
+                  onChange={(e) => setProposedName(e.target.value)}
+                  slotProps={{ htmlInput: { maxLength: 64 } }}
+                />
+                <TextField
+                  label="QQ 号获取头像（可选）"
+                  value={proposedQq}
+                  onChange={(e) => setProposedQq(e.target.value.replace(/\D/g, '').slice(0, 20))}
+                  helperText="将保存 QQ 头像 CDN 链接，不保存 QQ 号；留空时使用名称首字头像。"
+                  slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+                />
+                <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                  <Avatar src={qqAvatarUrl(proposedQq)} alt={proposedName} sx={{ width: 56, height: 56 }}>
+                    {nameInitial(proposedName)}
+                  </Avatar>
+                </Box>
+              </Stack>
             )}
 
             <QuoteMarkdownEditor
@@ -256,7 +276,7 @@ export default function SubmitDialog({
               onPlaceChange={setPlace}
               publishedAt={publishedAt}
               onPublishedAtChange={setPublishedAt}
-              keepOrderHint="默认最近 10 条，可搜索神人或内容。不选则按发布时间排。"
+              keepOrderHint="默认展示前 10 条，可搜索神人或内容。不选则按发布时间插入现有顺序。"
             />
 
             {open && captchaRequired ? (

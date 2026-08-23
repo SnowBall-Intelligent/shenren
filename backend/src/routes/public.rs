@@ -5,10 +5,9 @@ use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    Set,
+    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +15,9 @@ use crate::entities::{persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
 use crate::routes::cached_json;
 use crate::services::captcha::{CaptchaPayload, PublicProvider};
+use crate::services::quote_place::{new_quote_id, ordered_approved_quotes, parse_published_at};
 use crate::services::sanitize::{normalize_proposed_name, normalize_source};
+use crate::services::upload::qq_avatar_url;
 use crate::state::AppState;
 
 pub use crate::services::sanitize::normalize_quote_content;
@@ -64,12 +65,11 @@ pub struct PersonBrief {
 
 #[derive(Serialize)]
 pub struct QuoteItem {
-    pub id: i64,
+    pub id: String,
     pub person_id: i64,
     pub content: String,
     pub source: Option<String>,
     pub pinned: bool,
-    pub sort_order: i32,
     pub published_at: chrono::DateTime<chrono::FixedOffset>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub person: PersonBrief,
@@ -103,18 +103,16 @@ pub struct PersonsQuery {
 pub struct SubmissionBody {
     pub person_id: Option<i64>,
     pub proposed_person_name: Option<String>,
+    pub proposed_person_qq: Option<String>,
     pub content: String,
     pub source: Option<String>,
     pub published_at: Option<String>,
-    pub place_before_id: Option<i64>,
-    pub place_after_id: Option<i64>,
+    pub place_before_id: Option<String>,
+    pub place_after_id: Option<String>,
     pub captcha: Option<CaptchaPayload>,
 }
 
-pub async fn get_site(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> AppResult<Response> {
+pub async fn get_site(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
     if let Some(cached) = state.cache.get_site() {
         return Ok(cached_json(&headers, &cached));
     }
@@ -211,7 +209,10 @@ pub async fn list_quotes(
     let cached = if skip_cache {
         crate::cache::cached_or_raw(raw)
     } else {
-        match state.cache.put_quotes(page, page_size, query.person_id, raw.clone()) {
+        match state
+            .cache
+            .put_quotes(page, page_size, query.person_id, raw.clone())
+        {
             Some(c) => c,
             None => crate::cache::cached_or_raw(raw),
         }
@@ -228,35 +229,39 @@ async fn load_quotes_page(
     pinned: Option<bool>,
     recent: bool,
 ) -> AppResult<PaginatedQuotes> {
-    let mut finder = quotes::Entity::find()
-        .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
-        .filter(quotes::Column::PersonId.is_not_null());
-    if let Some(pid) = person_id {
-        finder = finder.filter(quotes::Column::PersonId.eq(pid));
-    }
-    if let Some(pinned) = pinned {
-        finder = finder.filter(quotes::Column::Pinned.eq(pinned));
-    }
-    if let Some(q) = q.filter(|s| !s.is_empty()) {
-        finder = finder.filter(crate::services::quote_place::quote_search_condition(&state.db, q).await?);
-    }
-    let finder = if recent {
+    let rows = if recent {
+        let mut finder = quotes::Entity::find()
+            .filter(quotes::Column::Status.eq(quotes::status::APPROVED))
+            .filter(quotes::Column::PersonId.is_not_null());
+        if let Some(pid) = person_id {
+            finder = finder.filter(quotes::Column::PersonId.eq(pid));
+        }
+        if let Some(pinned) = pinned {
+            finder = finder.filter(quotes::Column::Pinned.eq(pinned));
+        }
+        if let Some(q) = q.filter(|s| !s.is_empty()) {
+            finder = finder
+                .filter(crate::services::quote_place::quote_search_condition(&state.db, q).await?);
+        }
         finder
             .order_by_desc(quotes::Column::PublishedAt)
             .order_by_desc(quotes::Column::Id)
+            .all(&state.db)
+            .await?
     } else {
-        finder
-            .order_by_desc(quotes::Column::Pinned)
-            .order_by_desc(quotes::Column::SortOrder)
-            .order_by_desc(quotes::Column::PublishedAt)
-            .order_by_desc(quotes::Column::Id)
+        ordered_approved_quotes(&state.db, person_id, q, pinned).await?
     };
-    let paginator = finder.paginate(&state.db, page_size);
 
-    let total = paginator.num_items().await?;
-    let rows = paginator.fetch_page(page - 1).await?;
+    let total = rows.len() as u64;
+    let start = ((page - 1) * page_size) as usize;
+    let end = (start + page_size as usize).min(rows.len());
+    let page_rows = if start < rows.len() {
+        &rows[start..end]
+    } else {
+        &[]
+    };
 
-    let person_ids: Vec<i64> = rows.iter().filter_map(|q| q.person_id).collect();
+    let person_ids: Vec<i64> = page_rows.iter().filter_map(|q| q.person_id).collect();
     let people = if person_ids.is_empty() {
         Vec::new()
     } else {
@@ -267,8 +272,8 @@ async fn load_quotes_page(
     };
     let people_map: HashMap<i64, persons::Model> = people.into_iter().map(|p| (p.id, p)).collect();
 
-    let mut items = Vec::with_capacity(rows.len());
-    for q in rows {
+    let mut items = Vec::with_capacity(page_rows.len());
+    for q in page_rows {
         let pid = q
             .person_id
             .ok_or_else(|| AppError::internal("approved quote missing person_id"))?;
@@ -276,12 +281,11 @@ async fn load_quotes_page(
             .get(&pid)
             .ok_or_else(|| AppError::internal(format!("person {pid} missing")))?;
         items.push(QuoteItem {
-            id: q.id,
+            id: q.id.clone(),
             person_id: pid,
-            content: q.content,
-            source: q.source,
+            content: q.content.clone(),
+            source: q.source.clone(),
             pinned: q.pinned,
-            sort_order: q.sort_order,
             published_at: q.published_at,
             created_at: q.created_at,
             person: PersonBrief {
@@ -312,46 +316,50 @@ pub async fn create_submission(
     let settings = ensure_site_settings(&state).await?;
     let ip = state.config.client_ip(&headers, addr);
 
-    let (person_id, proposed_person_name) = match (
+    let proposed_avatar_url = match body.proposed_person_qq.as_deref() {
+        Some(raw) => qq_avatar_url(raw)?,
+        None => None,
+    };
+    let (person_id, proposed_person_name, proposed_person_avatar_url) = match (
         body.person_id,
         body.proposed_person_name
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
+        proposed_avatar_url,
     ) {
-        (Some(pid), None) => {
+        (Some(pid), None, None) => {
             let exists = persons::Entity::find_by_id(pid).one(&state.db).await?;
             if exists.is_none() {
                 return Err(AppError::bad_request("神人不存在"));
             }
-            (Some(pid), None)
+            (Some(pid), None, None)
         }
-        (None, Some(name)) => {
+        (None, Some(name), avatar_url) => {
             if !settings.allow_propose_person {
                 return Err(AppError::bad_request("当前未开放新神人投稿"));
             }
-            (None, Some(normalize_proposed_name(&name)?))
+            (None, Some(normalize_proposed_name(&name)?), avatar_url)
         }
-        (Some(_), Some(_)) => {
+        (Some(_), Some(_), _) => {
             return Err(AppError::bad_request(
                 "请选择已有神人或填写新神人名称，不能同时提交",
             ));
         }
-        (None, None) => {
+        (Some(_), None, Some(_)) => {
+            return Err(AppError::bad_request("选择已有神人时不能填写 QQ 号"));
+        }
+        (None, None, _) => {
             return Err(AppError::bad_request("请选择神人或填写新神人名称"));
         }
     };
 
-    crate::services::captcha::verify_submission_captcha(
-        &settings,
-        body.captcha.as_ref(),
-        Some(ip),
-    )
-    .await?;
+    crate::services::captcha::verify_submission_captcha(&settings, body.captcha.as_ref(), Some(ip))
+        .await?;
 
     if body.place_before_id.is_some() && body.place_after_id.is_some() {
         return Err(AppError::bad_request("只能指定排在某条前面或后面其中之一"));
     }
-    if let Some(anchor_id) = body.place_before_id.or(body.place_after_id) {
+    if let Some(anchor_id) = body.place_before_id.clone().or(body.place_after_id.clone()) {
         let anchor = quotes::Entity::find_by_id(anchor_id)
             .one(&state.db)
             .await?
@@ -361,20 +369,18 @@ pub async fn create_submission(
         }
     }
     let now = Utc::now().fixed_offset();
-    let published_at = match body.published_at.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(raw) => DateTime::parse_from_rfc3339(raw)
-            .map_err(|_| AppError::bad_request("发布时间无效"))?,
-        None => now,
-    };
+    let published_at = parse_published_at(body.published_at.as_deref(), now)?;
+    let quote_id = new_quote_id();
     let model = quotes::ActiveModel {
+        id: Set(quote_id.clone()),
         person_id: Set(person_id),
         proposed_person_name: Set(proposed_person_name),
+        proposed_person_avatar_url: Set(proposed_person_avatar_url),
         content: Set(content),
         source: Set(source),
         status: Set(quotes::status::PENDING.to_string()),
         created_at: Set(now),
         pinned: Set(false),
-        sort_order: Set(0),
         published_at: Set(published_at),
         place_before_id: Set(body.place_before_id),
         place_after_id: Set(body.place_after_id),

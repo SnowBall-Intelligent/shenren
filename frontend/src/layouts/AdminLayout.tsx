@@ -31,9 +31,11 @@ import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HomeIcon from '@mui/icons-material/Home'
+import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import { adminApi } from '../api'
 import type { AdminMe } from '../api/types'
 import { ApiError } from '../api/client'
+import ThemeModeButton from '../components/ThemeModeButton'
 
 const DRAWER_WIDTH = 240
 
@@ -57,6 +59,7 @@ const navItems: NavItem[] = [
     ],
   },
   { to: '/admin/persons', label: '神人管理', icon: <PeopleIcon /> },
+  { to: '/admin/api-keys', label: 'API Key', icon: <VpnKeyIcon /> },
   {
     id: 'settings',
     label: '站点设置',
@@ -232,8 +235,10 @@ export default function AdminLayout() {
         sx={{
           width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
           ml: { md: `${DRAWER_WIDTH}px` },
-          bgcolor: '#1a1a1a',
-          borderBottom: '1px solid #2a2a2a',
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          borderBottom: 1,
+          borderColor: 'divider',
         }}
         elevation={0}
       >
@@ -249,6 +254,7 @@ export default function AdminLayout() {
           <Typography variant="body2" color="text.secondary" sx={{ mr: 2 }}>
             {me.username}
           </Typography>
+          <ThemeModeButton />
           <Button color="inherit" size="small" onClick={() => void handleLogout()} startIcon={<LogoutIcon />}>
             退出
           </Button>

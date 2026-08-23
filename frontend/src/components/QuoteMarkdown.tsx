@@ -50,12 +50,13 @@ export default function QuoteMarkdown({ content }: { content: string }) {
           pl: 1.25,
           fontStyle: 'normal',
           color: 'inherit',
-          borderLeft: '2px solid #6b6b6b',
+          borderLeft: '2px solid',
+          borderLeftColor: 'text.secondary',
           '&:last-child': { mb: 0 },
           '& p': { m: 0, '& + p': { mt: 0.25 } },
         },
         '& blockquote blockquote': {
-          borderLeftColor: '#555',
+          borderLeftColor: 'divider',
           mt: 0.5,
         },
         '& ul, & ol': { m: 0, pl: 2.25 },
@@ -64,7 +65,7 @@ export default function QuoteMarkdown({ content }: { content: string }) {
         '& code': {
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
           fontSize: '0.9em',
-          bgcolor: 'rgba(255,255,255,0.08)',
+          bgcolor: 'action.hover',
           px: 0.5,
           borderRadius: '4px',
         },
@@ -72,7 +73,7 @@ export default function QuoteMarkdown({ content }: { content: string }) {
           m: 0,
           my: 0.75,
           p: 1,
-          bgcolor: 'rgba(0,0,0,0.35)',
+          bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.35)' : '#f1f3f5',
           borderRadius: 1,
           overflowX: 'auto',
           '& code': { bgcolor: 'transparent', p: 0 },
@@ -84,7 +85,7 @@ export default function QuoteMarkdown({ content }: { content: string }) {
           m: 0,
           mb: 0.5,
         },
-        '& hr': { border: 0, borderTop: '1px solid #444', my: 1 },
+        '& hr': { border: 0, borderTop: '1px solid', borderColor: 'divider', my: 1 },
       }}
     >
       <Markdown

@@ -4,20 +4,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "quotes")]
 pub struct Model {
-    #[sea_orm(primary_key)]
-    pub id: i64,
+    #[sea_orm(primary_key, auto_increment = false)]
+    pub id: String,
     pub person_id: Option<i64>,
     pub proposed_person_name: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub proposed_person_avatar_url: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub content: String,
     #[sea_orm(column_type = "Text", nullable)]
     pub source: Option<String>,
     pub status: String,
     pub pinned: bool,
-    pub sort_order: i32,
     pub published_at: DateTimeWithTimeZone,
-    pub place_before_id: Option<i64>,
-    pub place_after_id: Option<i64>,
+    pub place_before_id: Option<String>,
+    pub place_after_id: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub reviewed_at: Option<DateTimeWithTimeZone>,
     pub reviewed_by: Option<i64>,

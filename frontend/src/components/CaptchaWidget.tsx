@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Box, CircularProgress, Typography } from '@mui/material'
+import { Alert, Box, CircularProgress, Typography, useTheme } from '@mui/material'
 import type { CaptchaPayload, CaptchaVendor, PublicCaptchaProvider } from '../api/types'
 
 type Props = {
@@ -106,11 +106,13 @@ function SingleWidget({
   siteKey,
   onChange,
   onFail,
+  colorMode,
 }: {
   provider: CaptchaVendor
   siteKey: string
   onChange: (payload: CaptchaPayload | null) => void
   onFail: (reason: string) => void
+  colorMode: 'light' | 'dark'
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const onChangeRef = useRef(onChange)
@@ -155,7 +157,7 @@ function SingleWidget({
           if (cancelled) return
           turnstileId = turnstile.render(host, {
             sitekey: siteKey,
-            theme: 'dark',
+            theme: colorMode,
             callback: (token: string) => emit({ provider, token }),
             'expired-callback': () => emit(null),
             'error-callback': () => fail('Turnstile 验证失败'),
@@ -171,7 +173,7 @@ function SingleWidget({
           if (cancelled) return
           recaptchaId = grecaptcha.render(host, {
             sitekey: siteKey,
-            theme: 'dark',
+            theme: colorMode,
             callback: (token: string) => emit({ provider, token }),
             'expired-callback': () => emit(null),
             'error-callback': () => fail('reCAPTCHA 验证失败'),
@@ -260,7 +262,7 @@ function SingleWidget({
       }
       geetest?.destroy?.()
     }
-  }, [provider, siteKey])
+  }, [colorMode, provider, siteKey])
 
   return (
     <Box>
@@ -296,6 +298,7 @@ export function publicCaptchaList(captcha: {
 }
 
 export default function CaptchaWidget({ providers, onChange, skipSignal = 0, onExhausted }: Props) {
+  const theme = useTheme()
   const [index, setIndex] = useState(0)
   const [exhausted, setExhausted] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
@@ -362,11 +365,12 @@ export default function CaptchaWidget({ providers, onChange, skipSignal = 0, onE
         </Typography>
       ) : null}
       <SingleWidget
-        key={`${current.provider}-${index}`}
+        key={`${current.provider}-${index}-${theme.palette.mode}`}
         provider={current.provider}
         siteKey={current.site_key}
         onChange={onChange}
         onFail={handleFail}
+        colorMode={theme.palette.mode}
       />
     </Box>
   )

@@ -83,7 +83,8 @@ export default function AdminsPage() {
                 p: 1.5,
                 bgcolor: 'background.paper',
                 borderRadius: 2,
-                border: '1px solid #2a2a2a',
+                border: '1px solid',
+                borderColor: 'divider',
               }}
             >
               <Box sx={{ flex: 1 }}>

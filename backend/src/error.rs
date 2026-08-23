@@ -18,6 +18,11 @@ pub enum AppError {
     Conflict(String),
     #[error("too many requests")]
     TooManyRequests { retry_after: u64 },
+    #[error("{message}")]
+    ApiLimit {
+        message: String,
+        retry_after: Option<u64>,
+    },
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
     #[error(transparent)]
@@ -82,6 +87,26 @@ impl IntoResponse for AppError {
                 )
                     .into_response();
             }
+            AppError::ApiLimit {
+                message,
+                retry_after,
+            } => {
+                let mut response = (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({ "message": message, "error": message })),
+                )
+                    .into_response();
+                if let Some(secs) = retry_after {
+                    if let Ok(value) =
+                        axum::http::HeaderValue::from_str(&(*secs).max(1).to_string())
+                    {
+                        response
+                            .headers_mut()
+                            .insert(axum::http::header::RETRY_AFTER, value);
+                    }
+                }
+                return response;
+            }
             AppError::Db(e) => {
                 tracing::error!("database error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "数据库错误".to_string())
@@ -99,10 +124,7 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(m) => {
                 tracing::error!("internal error: {m}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "服务器错误".to_string(),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, "服务器错误".to_string())
             }
             AppError::CaptchaFailed(m) => (StatusCode::BAD_REQUEST, m.clone()),
         };

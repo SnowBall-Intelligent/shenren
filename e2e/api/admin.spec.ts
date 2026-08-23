@@ -27,6 +27,23 @@ test('admin can create a person and an approved quote', async ({ request }) => {
   expect(body.person.name).toBe(name)
 })
 
+test('admin can create a person with a QQ CDN avatar', async ({ request }) => {
+  await ensureAdmin(request)
+  const qq = '123456789'
+  const created = await request.post('/api/admin/persons', {
+    multipart: { name: unique('QQ头像'), qq },
+  })
+  expect(created.status(), await created.text()).toBe(201)
+  expect((await created.json()).avatar_url).toBe(
+    `https://q2.qlogo.cn/headimg_dl?dst_uin=${qq}&spec=0`,
+  )
+
+  const invalid = await request.post('/api/admin/persons', {
+    multipart: { name: unique('坏QQ'), qq: '0123' },
+  })
+  expect(invalid.status()).toBe(400)
+})
+
 test('pending submission can be rejected', async ({ request }) => {
   await ensureAdmin(request)
   const personId = await createPerson(request, unique('待拒'))
@@ -36,13 +53,13 @@ test('pending submission can be rejected', async ({ request }) => {
     headers: { Origin: WEB },
   })
   expect(submit.status()).toBe(201)
-  const { id } = (await submit.json()) as { id: number }
+  const { id } = (await submit.json()) as { id: string }
 
   const rejected = await request.post(`/api/admin/quotes/${id}/reject`, { data: {} })
   expect(rejected.ok(), await rejected.text()).toBeTruthy()
   expect((await rejected.json()).status).toBe('rejected')
 
   const publicList = await request.get('/api/quotes?page_size=50')
-  const items = (await publicList.json()).items as { id: number }[]
+  const items = (await publicList.json()).items as { id: string }[]
   expect(items.some((item) => item.id === id)).toBeFalsy()
 })

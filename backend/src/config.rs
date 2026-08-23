@@ -59,10 +59,8 @@ impl Config {
             .collect();
 
         let is_sqlite = database_url.starts_with("sqlite:");
-        let db_max_connections = env_u32(
-            "DATABASE_MAX_CONNECTIONS",
-            if is_sqlite { 8 } else { 32 },
-        );
+        let db_max_connections =
+            env_u32("DATABASE_MAX_CONNECTIONS", if is_sqlite { 8 } else { 32 });
 
         Ok(Self {
             database_url,
@@ -111,10 +109,7 @@ impl Config {
             if let Some(ip) = header_ip(headers, "cf-connecting-ip") {
                 return ip;
             }
-            if let Some(xff) = headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-            {
+            if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
                 if let Some(first) = xff.split(',').next() {
                     if let Ok(ip) = first.trim().parse::<IpAddr>() {
                         return ip;
@@ -141,11 +136,7 @@ fn is_loopback_bind(bind: &str) -> bool {
 
 pub fn validate_uploads_dir(p: PathBuf) -> Result<PathBuf, String> {
     let cwd = env::current_dir().map_err(|e| format!("cwd: {e}"))?;
-    let abs = if p.is_absolute() {
-        p
-    } else {
-        cwd.join(p)
-    };
+    let abs = if p.is_absolute() { p } else { cwd.join(p) };
     let mut out = PathBuf::new();
     for c in abs.components() {
         match c {

@@ -19,7 +19,7 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
 import { adminApi } from '../../api'
 import type { Person } from '../../api/types'
-import { ApiError, nameInitial, uploadUrl } from '../../api/client'
+import { ApiError, nameInitial, qqAvatarUrl, uploadUrl } from '../../api/client'
 import QuoteCreateDialog from './QuoteCreateDialog'
 import { useToast } from '../../components/AppToast'
 
@@ -91,7 +91,8 @@ export default function PersonsPage() {
                 p: 1.5,
                 bgcolor: 'background.paper',
                 borderRadius: 2,
-                border: '1px solid #2a2a2a',
+                border: '1px solid',
+                borderColor: 'divider',
               }}
             >
               <Avatar src={uploadUrl(p.avatar_url)} alt={p.name}>
@@ -164,6 +165,7 @@ function PersonDialog({
   const [name, setName] = useState('')
   const [avatar, setAvatar] = useState<File | null>(null)
   const [avatarUrl, setAvatarUrl] = useState('')
+  const [qq, setQq] = useState('')
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -173,6 +175,7 @@ function PersonDialog({
       setName(person?.name ?? '')
       setAvatar(null)
       setAvatarUrl('')
+      setQq('')
       setFormError(null)
     }
   }, [open, person])
@@ -189,11 +192,12 @@ function PersonDialog({
 
   const previewSrc =
     previewObjectUrl ??
-    (avatarUrl.trim() || (person ? uploadUrl(person.avatar_url) : undefined) || undefined)
+    (qqAvatarUrl(qq) || avatarUrl.trim() || (person ? uploadUrl(person.avatar_url) : undefined) || undefined)
 
   const submit = async () => {
     const trimmed = name.trim()
     const url = avatarUrl.trim()
+    const qqValue = qq.trim()
     if (!trimmed) {
       setFormError('请填写名称')
       return
@@ -202,12 +206,17 @@ function PersonDialog({
       setFormError('头像 URL 须以 http:// 或 https:// 开头')
       return
     }
+    if (qqValue && !qqAvatarUrl(qqValue)) {
+      setFormError('请输入 5-20 位、首位不为 0 的 QQ 号')
+      return
+    }
     setBusy(true)
     setFormError(null)
     try {
       const form = new FormData()
       form.append('name', trimmed)
       if (avatar) form.append('avatar', avatar)
+      else if (qqValue) form.append('qq', qqValue)
       else if (url) form.append('avatar_url', url)
       if (person) {
         await adminApi.updatePerson(person.id, form)
@@ -248,16 +257,37 @@ function PersonDialog({
               accept="image/*"
               onChange={(e) => {
                 setAvatar(e.target.files?.[0] ?? null)
-                if (e.target.files?.[0]) setAvatarUrl('')
+                if (e.target.files?.[0]) {
+                  setAvatarUrl('')
+                  setQq('')
+                }
               }}
             />
           </Button>
+          <TextField
+            label="QQ 号获取头像（可选）"
+            value={qq}
+            onChange={(e) => {
+              setQq(e.target.value.replace(/\D/g, '').slice(0, 20))
+              if (e.target.value.trim()) {
+                setAvatar(null)
+                setAvatarUrl('')
+              }
+            }}
+            fullWidth
+            placeholder="输入 QQ 号"
+            helperText="将保存 QQ 头像 CDN 链接，不保存 QQ 号。"
+            slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+          />
           <TextField
             label="头像 URL（可选）"
             value={avatarUrl}
             onChange={(e) => {
               setAvatarUrl(e.target.value)
-              if (e.target.value.trim()) setAvatar(null)
+              if (e.target.value.trim()) {
+                setAvatar(null)
+                setQq('')
+              }
             }}
             fullWidth
             placeholder="https://"

@@ -1,7 +1,7 @@
 import { Avatar, Box, Typography } from '@mui/material'
 import type { Quote } from '../api/types'
 import { nameInitial, uploadUrl } from '../api/client'
-import { AVATAR_COL, BUBBLE_BG, BUBBLE_TEXT } from '../theme'
+import { AVATAR_COL } from '../theme'
 import QuoteMarkdown from './QuoteMarkdown'
 
 interface QuoteBubbleProps {
@@ -28,7 +28,7 @@ export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubb
           <Avatar
             src={avatar}
             alt={name}
-            sx={{ width: 36, height: 36, bgcolor: '#3a3a3a', fontSize: 14 }}
+            sx={{ width: 36, height: 36, bgcolor: 'action.selected', fontSize: 14 }}
           >
             {nameInitial(name)}
           </Avatar>
@@ -48,8 +48,8 @@ export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubb
           sx={{
             display: 'inline-block',
             maxWidth: '100%',
-            bgcolor: BUBBLE_BG,
-            color: BUBBLE_TEXT,
+            bgcolor: (theme) => theme.palette.mode === 'dark' ? '#2c2c2c' : '#e9eef5',
+            color: 'text.primary',
             borderRadius: '12px',
             px: 1.5,
             py: 1,

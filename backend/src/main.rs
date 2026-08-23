@@ -16,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cache::PublicReadCache;
 use crate::config::Config;
+use crate::services::api_key::ApiKeyLimiters;
 use crate::services::auth::hash_password;
 use crate::services::rate_limit::RateLimiters;
 use crate::state::AppState;
@@ -73,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db,
         config: Arc::new(config.clone()),
         rate_limiters: Arc::new(rate_limiters),
+        api_key_limiters: Arc::new(ApiKeyLimiters::new()),
         cache: Arc::new(PublicReadCache::new()),
         dummy_password_hash: dummy_password_hash.into(),
     };
