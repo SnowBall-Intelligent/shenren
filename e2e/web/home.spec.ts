@@ -5,16 +5,16 @@ import { API, unique, WEB } from '../helpers/env'
 test('homepage shows the site chrome', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('link', { name: '神人网' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '投稿' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '投稿', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: '管理' })).toBeVisible()
 })
 
 test('投稿 opens the submit dialog', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: '投稿' }).click()
+  await page.getByRole('button', { name: '投稿', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await expect(page.getByRole('heading', { name: '投稿' })).toBeVisible()
-  await expect(page.getByLabel('神人')).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '神人', exact: true })).toBeVisible()
 })
 
 test('an approved quote created via API appears on the homepage', async ({ page, playwright }) => {
@@ -107,10 +107,12 @@ test('mobile timeline opens a summary before locating a quote', async ({ page })
   await expect(timeline).toHaveCSS('position', 'sticky')
   const marker = page.getByTestId('timeline-marker-1')
   await marker.click()
-  await expect(page.getByRole('button', { name: '定位' })).toBeVisible()
-  await expect(page.getByTestId('timeline-mobile-preview')).toContainText(/^#1 · /)
-  await page.getByRole('button', { name: '定位' }).click()
-  await expect(page.getByRole('button', { name: '定位' })).not.toBeVisible()
+  const preview = page.getByTestId('timeline-mobile-preview')
+  const locateButton = page.getByRole('button', { name: '定位', exact: true })
+  await expect(locateButton).toBeVisible()
+  await expect(preview).toContainText(/^#1 · /)
+  await locateButton.click()
+  await expect(preview).not.toBeVisible()
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(0)
