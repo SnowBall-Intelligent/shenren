@@ -36,6 +36,7 @@ test('super admin can manage roles and ordinary admins only see business modules
   await page.getByLabel('用户名').fill(ADMIN_USER)
   await page.getByLabel('密码').fill(ADMIN_PASS)
   await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/admin\/quotes\/review/)
   await page.goto('/admin/admins')
 
   await expect(page.getByLabel(`编辑${ADMIN_USER}角色`)).toBeDisabled()
@@ -82,6 +83,7 @@ test('super admin can manage roles and ordinary admins only see business modules
   await page.getByLabel('用户名').fill(ADMIN_USER)
   await page.getByLabel('密码').fill(ADMIN_PASS)
   await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/admin\/quotes\/review/)
   await page.goto('/admin/admins')
   page.once('dialog', (dialog) => void dialog.accept())
   await page.getByLabel(`删除${username}`).click()
