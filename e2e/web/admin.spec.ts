@@ -44,7 +44,7 @@ test('super admin can manage roles and ordinary admins only see business modules
   await page.getByRole('link', { name: '人机验证', exact: true }).last().click()
   await expect(page).toHaveURL(/\/admin\/settings\/captcha/)
   await expect(
-    page.getByRole('checkbox', { name: '修改管理员账号时要求人机验证' }),
+    page.getByRole('switch', { name: '修改管理员账号时要求人机验证' }),
   ).toBeVisible()
   await expect(page.getByRole('link', { name: 'API Key', exact: true }).last()).toBeVisible()
   await page.getByRole('link', { name: '管理员', exact: true }).last().click()
