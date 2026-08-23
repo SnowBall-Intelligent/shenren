@@ -1,13 +1,15 @@
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use rand_core::OsRng;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use tower_sessions::Session;
 
 use crate::entities::admins;
 use crate::error::{AppError, AppResult};
 
 pub const SESSION_ADMIN_ID: &str = "admin_id";
+pub const ROLE_SUPER_ADMIN: &str = "super_admin";
+pub const ROLE_ADMIN: &str = "admin";
 
 pub fn hash_password(password: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
@@ -26,7 +28,10 @@ pub fn verify_password(password: &str, password_hash: &str) -> AppResult<bool> {
         .is_ok())
 }
 
-pub async fn require_admin(session: &Session, db: &DatabaseConnection) -> AppResult<admins::Model> {
+pub async fn require_admin<C>(session: &Session, db: &C) -> AppResult<admins::Model>
+where
+    C: ConnectionTrait,
+{
     let admin_id: Option<i64> = session.get(SESSION_ADMIN_ID).await?;
     let Some(admin_id) = admin_id else {
         return Err(AppError::unauthorized("未登录"));
@@ -38,13 +43,36 @@ pub async fn require_admin(session: &Session, db: &DatabaseConnection) -> AppRes
     Ok(admin)
 }
 
-pub async fn admin_count(db: &DatabaseConnection) -> AppResult<u64> {
-    use sea_orm::PaginatorTrait;
+pub async fn require_super_admin<C>(session: &Session, db: &C) -> AppResult<admins::Model>
+where
+    C: ConnectionTrait,
+{
+    let admin = require_admin(session, db).await?;
+    if admin.role != ROLE_SUPER_ADMIN {
+        return Err(AppError::forbidden("需要超级管理员权限"));
+    }
+    Ok(admin)
+}
+
+pub async fn admin_count<C>(db: &C) -> AppResult<u64>
+where
+    C: ConnectionTrait,
+{
     Ok(admins::Entity::find().count(db).await?)
 }
 
+pub async fn super_admin_count<C>(db: &C) -> AppResult<u64>
+where
+    C: ConnectionTrait,
+{
+    Ok(admins::Entity::find()
+        .filter(admins::Column::Role.eq(ROLE_SUPER_ADMIN))
+        .count(db)
+        .await?)
+}
+
 pub async fn find_admin_by_username(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     username: &str,
 ) -> AppResult<Option<admins::Model>> {
     Ok(admins::Entity::find()

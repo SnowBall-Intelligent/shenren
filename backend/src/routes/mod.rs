@@ -19,10 +19,11 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tower_sessions::cookie::SameSite;
-use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer};
+use tower_sessions::{Expiry, MemoryStore, Session, SessionManagerLayer};
 
 use crate::config::{origin_from_referer, Config};
 use crate::error::AppError;
+use crate::services::auth::require_super_admin;
 use crate::services::rate_limit::Bucket;
 use crate::state::AppState;
 
@@ -44,7 +45,7 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
         .route("/persons", get(public::list_persons))
         .route("/submissions", post(public::create_submission));
 
-    let admin_api = admin_routes()
+    let admin_api = admin_routes(state.clone())
         .layer(middleware::from_fn_with_state(state.clone(), admin_csrf_mw))
         .layer(session_layer);
 
@@ -114,15 +115,11 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
         .with_state(state)
 }
 
-fn admin_routes() -> Router<AppState> {
-    Router::new()
-        .route("/bootstrap-status", get(admin::bootstrap_status))
-        .route("/setup", post(admin::setup))
-        .route("/login", post(admin::login))
-        .route("/logout", post(admin::logout))
-        .route("/me", get(admin::me))
+fn admin_routes(state: AppState) -> Router<AppState> {
+    let super_admin_routes = Router::new()
         .route("/admins", get(admin::list_admins).post(admin::create_admin))
         .route("/admins/{id}", delete(admin::delete_admin))
+        .route("/admins/{id}/role", put(admin::update_admin_role))
         .route("/api-keys", get(api_keys::list).post(api_keys::create))
         .route(
             "/api-keys/{id}",
@@ -137,6 +134,14 @@ fn admin_routes() -> Router<AppState> {
             "/captcha",
             get(admin::get_captcha).put(admin::update_captcha),
         )
+        .route_layer(middleware::from_fn_with_state(state, super_admin_mw));
+
+    Router::new()
+        .route("/bootstrap-status", get(admin::bootstrap_status))
+        .route("/setup", post(admin::setup))
+        .route("/login", post(admin::login))
+        .route("/logout", post(admin::logout))
+        .route("/me", get(admin::me))
         .route(
             "/persons",
             get(admin::list_persons_admin).post(admin::create_person),
@@ -158,6 +163,7 @@ fn admin_routes() -> Router<AppState> {
         .route("/quotes/{id}/approve", post(admin::approve_quote))
         .route("/quotes/{id}/approve-json", post(admin::approve_quote_json))
         .route("/quotes/{id}/reject", post(admin::reject_quote))
+        .merge(super_admin_routes)
 }
 
 fn external_cors_layer() -> CorsLayer {
@@ -267,6 +273,16 @@ async fn admin_csrf_mw(
         Some(o) if state.config.origin_allowed(&o) => Ok(next.run(request).await),
         _ => Err(AppError::forbidden("来源不被允许")),
     }
+}
+
+async fn super_admin_mw(
+    State(state): State<AppState>,
+    session: Session,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    require_super_admin(&session, &state.db).await?;
+    Ok(next.run(request).await)
 }
 
 async fn uploads_and_security_headers(request: Request, next: Next) -> Response {

@@ -2,6 +2,7 @@ import { apiForm, apiJson } from './client'
 import type {
   Admin,
   AdminMe,
+  AdminRole,
   BootstrapStatus,
   Paginated,
   Person,
@@ -164,10 +165,16 @@ export const adminApi = {
   // Admins
   listAdmins: () => apiJson<Admin[] | { items: Admin[] }>('/api/admin/admins'),
 
-  createAdmin: (username: string, password: string) =>
+  createAdmin: (username: string, password: string, role: AdminRole = 'admin') =>
     apiJson<Admin>('/api/admin/admins', {
       method: 'POST',
-      body: { username, password },
+      body: { username, password, role },
+    }),
+
+  updateAdminRole: (id: number, role: AdminRole) =>
+    apiJson<Admin>(`/api/admin/admins/${id}/role`, {
+      method: 'PUT',
+      body: { role },
     }),
 
   deleteAdmin: (id: number) =>

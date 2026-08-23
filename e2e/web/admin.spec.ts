@@ -28,6 +28,66 @@ test('admin can create a person from the UI', async ({ page }) => {
   await expect(page.getByText(name)).toBeVisible()
 })
 
+test('super admin can manage roles and ordinary admins only see business modules', async ({ page }) => {
+  const username = unique('界面普通管理员')
+  const password = 'web-ordinary-pass-12'
+
+  await page.goto('/admin/login')
+  await page.getByLabel('用户名').fill(ADMIN_USER)
+  await page.getByLabel('密码').fill(ADMIN_PASS)
+  await page.getByRole('button', { name: '登录' }).click()
+  await page.goto('/admin/admins')
+
+  await expect(page.getByLabel(`编辑${ADMIN_USER}角色`)).toBeDisabled()
+  await expect(page.getByLabel(`删除${ADMIN_USER}`)).toBeDisabled()
+
+  await page.getByRole('button', { name: '新增管理员' }).click()
+  const createDialog = page.getByRole('dialog', { name: '新增管理员' })
+  await expect(createDialog.getByText('可完整管理言论和神人，不能访问其他后台模块。')).toBeVisible()
+  await createDialog.getByLabel('用户名').fill(username)
+  await createDialog.getByLabel('密码').fill(password)
+  await createDialog.getByRole('button', { name: '创建' }).click()
+  await expect(page.getByText(username, { exact: true })).toBeVisible()
+
+  await page.getByLabel(`编辑${username}角色`).click()
+  const editDialog = page.getByRole('dialog', { name: '编辑管理员角色' })
+  await editDialog.getByRole('combobox', { name: '角色' }).click()
+  await page.getByRole('option', { name: '超级管理员' }).click()
+  await editDialog.getByRole('button', { name: '保存' }).click()
+  await expect(editDialog).toBeHidden()
+  await expect(page.getByText('角色已更新')).toBeVisible()
+
+  await page.getByLabel(`编辑${username}角色`).click()
+  await editDialog.getByRole('combobox', { name: '角色' }).click()
+  await page.getByRole('option', { name: '普通管理员' }).click()
+  await editDialog.getByRole('button', { name: '保存' }).click()
+  await expect(editDialog).toBeHidden()
+  await expect(page.getByText('角色已更新')).toBeVisible()
+
+  await page.getByRole('button', { name: '退出' }).click()
+  await page.getByLabel('用户名').fill(username)
+  await page.getByLabel('密码').fill(password)
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/admin\/quotes\/review/)
+  await expect(page.getByText('言论管理')).toBeVisible()
+  await expect(page.getByText('神人管理')).toBeVisible()
+  await expect(page.getByText('API Key')).toHaveCount(0)
+  await expect(page.getByText('站点设置')).toHaveCount(0)
+  await expect(page.getByText('管理员', { exact: true })).toHaveCount(0)
+
+  await page.goto('/admin/admins')
+  await expect(page).toHaveURL(/\/admin\/quotes\/review/)
+
+  await page.getByRole('button', { name: '退出' }).click()
+  await page.getByLabel('用户名').fill(ADMIN_USER)
+  await page.getByLabel('密码').fill(ADMIN_PASS)
+  await page.getByRole('button', { name: '登录' }).click()
+  await page.goto('/admin/admins')
+  page.once('dialog', (dialog) => void dialog.accept())
+  await page.getByLabel(`删除${username}`).click()
+  await expect(page.getByText(username, { exact: true })).toHaveCount(0)
+})
+
 test('theme preference persists across reloads', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '外观模式' }).click()

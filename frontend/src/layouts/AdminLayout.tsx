@@ -39,8 +39,15 @@ import ThemeModeButton from '../components/ThemeModeButton'
 
 const DRAWER_WIDTH = 240
 
-type NavLeaf = { to: string; label: string; icon: ReactNode }
-type NavGroup = { id: string; label: string; icon: ReactNode; match: string; children: NavLeaf[] }
+type NavLeaf = { to: string; label: string; icon: ReactNode; superOnly?: boolean }
+type NavGroup = {
+  id: string
+  label: string
+  icon: ReactNode
+  match: string
+  children: NavLeaf[]
+  superOnly?: boolean
+}
 type NavItem = NavLeaf | NavGroup
 
 function isNavGroup(item: NavItem): item is NavGroup {
@@ -59,19 +66,28 @@ const navItems: NavItem[] = [
     ],
   },
   { to: '/admin/persons', label: '神人管理', icon: <PeopleIcon /> },
-  { to: '/admin/api-keys', label: 'API Key', icon: <VpnKeyIcon /> },
+  { to: '/admin/api-keys', label: 'API Key', icon: <VpnKeyIcon />, superOnly: true },
   {
     id: 'settings',
     label: '站点设置',
     icon: <SettingsIcon />,
     match: '/admin/settings',
+    superOnly: true,
     children: [
       { to: '/admin/settings', label: '基本信息', icon: <InfoOutlinedIcon /> },
       { to: '/admin/settings/captcha', label: '人机验证', icon: <VerifiedUserIcon /> },
     ],
   },
-  { to: '/admin/admins', label: '管理员', icon: <AdminPanelSettingsIcon /> },
+  { to: '/admin/admins', label: '管理员', icon: <AdminPanelSettingsIcon />, superOnly: true },
 ]
+
+function isRestrictedPath(pathname: string) {
+  return (
+    pathname.startsWith('/admin/api-keys') ||
+    pathname.startsWith('/admin/settings') ||
+    pathname.startsWith('/admin/admins')
+  )
+}
 
 function activeGroupId(pathname: string): string | null {
   const group = navItems.find((item) => isNavGroup(item) && pathname.startsWith(item.match))
@@ -152,6 +168,12 @@ export default function AdminLayout() {
     return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />
   }
 
+  if (me.role !== 'super_admin' && isRestrictedPath(location.pathname)) {
+    return <Navigate to="/admin/quotes/review" replace />
+  }
+
+  const visibleNavItems = navItems.filter((item) => me.role === 'super_admin' || !item.superOnly)
+
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Toolbar>
@@ -161,7 +183,7 @@ export default function AdminLayout() {
       </Toolbar>
       <Divider />
       <List sx={{ flex: 1 }}>
-        {navItems.map((item) =>
+        {visibleNavItems.map((item) =>
           isNavGroup(item) ? (
             <Box key={item.id}>
               <ListItemButton

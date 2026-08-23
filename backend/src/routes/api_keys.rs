@@ -12,7 +12,7 @@ use crate::services::api_key::{
     encode_string_list, generate_api_key, normalize_domain_rules, normalize_ip_rules,
     parse_string_list,
 };
-use crate::services::auth::require_admin;
+use crate::services::auth::require_super_admin;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -126,7 +126,7 @@ pub async fn list(
     State(state): State<AppState>,
     session: Session,
 ) -> AppResult<Json<Vec<ApiKeyItem>>> {
-    require_admin(&session, &state.db).await?;
+    require_super_admin(&session, &state.db).await?;
     let rows = api_keys::Entity::find()
         .order_by_desc(api_keys::Column::CreatedAt)
         .all(&state.db)
@@ -143,7 +143,7 @@ pub async fn create(
     session: Session,
     Json(body): Json<ApiKeyBody>,
 ) -> AppResult<(StatusCode, Json<ApiKeyItem>)> {
-    require_admin(&session, &state.db).await?;
+    require_super_admin(&session, &state.db).await?;
     let body = validate_body(body)?;
     let (raw, prefix, hash) = generate_api_key();
     let now = Utc::now().fixed_offset();
@@ -175,7 +175,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(body): Json<ApiKeyBody>,
 ) -> AppResult<Json<ApiKeyItem>> {
-    require_admin(&session, &state.db).await?;
+    require_super_admin(&session, &state.db).await?;
     let body = validate_body(body)?;
     let model = api_keys::Entity::find_by_id(id)
         .one(&state.db)
@@ -201,7 +201,7 @@ pub async fn delete(
     session: Session,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiKeyMessage>> {
-    require_admin(&session, &state.db).await?;
+    require_super_admin(&session, &state.db).await?;
     let result = api_keys::Entity::delete_many()
         .filter(api_keys::Column::Id.eq(id))
         .exec(&state.db)
@@ -220,7 +220,7 @@ pub async fn reset_usage(
     session: Session,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiKeyItem>> {
-    require_admin(&session, &state.db).await?;
+    require_super_admin(&session, &state.db).await?;
     let model = api_keys::Entity::find_by_id(id)
         .one(&state.db)
         .await?

@@ -16,6 +16,12 @@ struct MigratedQuote {
     place_after_id: Option<String>,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct MigratedAdmin {
+    username: String,
+    role: String,
+}
+
 #[tokio::test]
 async fn migrates_legacy_quotes_on_configured_database() {
     let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
@@ -49,6 +55,18 @@ async fn migrates_legacy_quotes_on_configured_database() {
         .expect("inspect legacy quote schema"));
 
     let now = chrono::Utc::now().fixed_offset();
+    db.execute(Statement::from_sql_and_values(
+        backend,
+        "INSERT INTO admins (username, password_hash, created_at) VALUES (?, ?, ?)",
+        vec![
+            "legacy-admin".into(),
+            "legacy-password-hash".into(),
+            now.into(),
+        ],
+    ))
+    .await
+    .expect("insert legacy admin");
+
     for (content, sort_order) in [(FIRST_CONTENT, 20_i32), (SECOND_CONTENT, 10_i32)] {
         db.execute(Statement::from_sql_and_values(
             backend,
@@ -88,6 +106,21 @@ async fn migrates_legacy_quotes_on_configured_database() {
         .has_table("api_keys")
         .await
         .expect("inspect API key table"));
+    assert!(schema
+        .has_column("admins", "role")
+        .await
+        .expect("inspect admin role column"));
+
+    let admins = MigratedAdmin::find_by_statement(Statement::from_string(
+        backend,
+        "SELECT username, role FROM admins ORDER BY id".to_string(),
+    ))
+    .all(&db)
+    .await
+    .expect("load migrated admins");
+    assert_eq!(admins.len(), 1);
+    assert_eq!(admins[0].username, "legacy-admin");
+    assert_eq!(admins[0].role, "super_admin");
 
     let rows = MigratedQuote::find_by_statement(Statement::from_string(
         backend,

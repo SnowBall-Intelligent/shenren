@@ -108,15 +108,19 @@ export interface BootstrapStatus {
   has_admins?: boolean
 }
 
+export type AdminRole = 'super_admin' | 'admin'
+
 export interface Admin {
   id: number
   username: string
+  role: AdminRole
   created_at: string
 }
 
 export interface AdminMe {
   id: number
   username: string
+  role: AdminRole
   message?: string
 }
 

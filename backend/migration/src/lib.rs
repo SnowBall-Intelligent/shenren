@@ -8,6 +8,7 @@ mod m20260822_000001_quote_placement;
 mod m20260822_000002_quote_place_anchor;
 mod m20260823_000001_quote_uuid_chain;
 mod m20260823_000002_api_keys_and_proposed_avatar;
+mod m20260823_000003_admin_roles;
 
 pub struct Migrator;
 
@@ -23,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260822_000002_quote_place_anchor::Migration),
             Box::new(m20260823_000001_quote_uuid_chain::Migration),
             Box::new(m20260823_000002_api_keys_and_proposed_avatar::Migration),
+            Box::new(m20260823_000003_admin_roles::Migration),
         ]
     }
 }

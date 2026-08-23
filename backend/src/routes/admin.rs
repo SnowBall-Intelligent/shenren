@@ -3,7 +3,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, FixedOffset, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    AccessMode, ActiveModelTrait, ColumnTrait, EntityTrait, IsolationLevel, PaginatorTrait,
+    QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -14,8 +15,8 @@ use crate::routes::public::{
     ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
 };
 use crate::services::auth::{
-    admin_count, find_admin_by_username, hash_password, require_admin, verify_password,
-    SESSION_ADMIN_ID,
+    admin_count, find_admin_by_username, hash_password, require_admin, require_super_admin,
+    super_admin_count, verify_password, ROLE_ADMIN, ROLE_SUPER_ADMIN, SESSION_ADMIN_ID,
 };
 use crate::services::quote_place::{
     move_in_chain, new_quote_id, on_pinned_changed, ordered_approved_quotes, place_quote,
@@ -53,6 +54,7 @@ pub struct LoginBody {
 pub struct AdminInfo {
     pub id: i64,
     pub username: String,
+    pub role: String,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -62,6 +64,7 @@ fn admin_info(admin: &admins::Model, message: Option<&str>) -> AdminInfo {
     AdminInfo {
         id: admin.id,
         username: admin.username.clone(),
+        role: admin.role.clone(),
         created_at: admin.created_at,
         message: message.map(str::to_string),
     }
@@ -71,6 +74,12 @@ fn admin_info(admin: &admins::Model, message: Option<&str>) -> AdminInfo {
 pub struct CreateAdminBody {
     pub username: String,
     pub password: String,
+    pub role: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateAdminRoleBody {
+    pub role: String,
 }
 
 #[derive(Deserialize)]
@@ -165,6 +174,14 @@ fn validate_credentials(username: &str, password: &str) -> AppResult<(String, St
     Ok((username, password.to_string()))
 }
 
+fn validate_admin_role(role: Option<&str>) -> AppResult<String> {
+    match role.unwrap_or(ROLE_ADMIN) {
+        ROLE_SUPER_ADMIN => Ok(ROLE_SUPER_ADMIN.to_string()),
+        ROLE_ADMIN => Ok(ROLE_ADMIN.to_string()),
+        _ => Err(AppError::bad_request("角色无效")),
+    }
+}
+
 pub async fn bootstrap_status(State(state): State<AppState>) -> AppResult<Json<BootstrapStatus>> {
     let count = admin_count(&state.db).await?;
     Ok(Json(BootstrapStatus {
@@ -189,6 +206,7 @@ pub async fn setup(
     let admin = admins::ActiveModel {
         username: Set(username),
         password_hash: Set(password_hash),
+        role: Set(ROLE_SUPER_ADMIN.to_string()),
         created_at: Set(now),
         ..Default::default()
     }
@@ -246,7 +264,7 @@ pub async fn list_admins(
     State(state): State<AppState>,
     session: Session,
 ) -> AppResult<Json<Vec<AdminInfo>>> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let rows = admins::Entity::find()
         .order_by_asc(admins::Column::Id)
         .all(&state.db)
@@ -261,8 +279,9 @@ pub async fn create_admin(
     session: Session,
     Json(body): Json<CreateAdminBody>,
 ) -> AppResult<(StatusCode, Json<AdminInfo>)> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let (username, password) = validate_credentials(&body.username, &body.password)?;
+    let role = validate_admin_role(body.role.as_deref())?;
 
     if find_admin_by_username(&state.db, &username)
         .await?
@@ -276,6 +295,7 @@ pub async fn create_admin(
     let admin = admins::ActiveModel {
         username: Set(username),
         password_hash: Set(password_hash),
+        role: Set(role),
         created_at: Set(now),
         ..Default::default()
     }
@@ -293,31 +313,80 @@ pub async fn delete_admin(
     session: Session,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
-    let current = require_admin(&session, &state.db).await?;
-    let count = admin_count(&state.db).await?;
-    if count <= 1 {
-        return Err(AppError::forbidden("不能删除最后一个管理员"));
+    let transaction = state
+        .db
+        .begin_with_config(
+            Some(IsolationLevel::Serializable),
+            Some(AccessMode::ReadWrite),
+        )
+        .await?;
+    let current = require_super_admin(&session, &transaction).await?;
+    if current.id == id {
+        return Err(AppError::forbidden("不能删除自己的账号"));
     }
 
     let target = admins::Entity::find_by_id(id)
-        .one(&state.db)
+        .one(&transaction)
         .await?
         .ok_or_else(|| AppError::not_found("管理员不存在"))?;
 
-    let deleting_self = current.id == id;
-    let am: admins::ActiveModel = target.into();
-    am.delete(&state.db).await?;
-    if deleting_self {
-        session.flush().await?;
+    if target.role == ROLE_SUPER_ADMIN && super_admin_count(&transaction).await? <= 1 {
+        return Err(AppError::forbidden("不能删除最后一名超级管理员"));
     }
+
+    let am: admins::ActiveModel = target.into();
+    am.delete(&transaction).await?;
+    transaction.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn update_admin_role(
+    State(state): State<AppState>,
+    session: Session,
+    Path(id): Path<i64>,
+    Json(body): Json<UpdateAdminRoleBody>,
+) -> AppResult<Json<AdminInfo>> {
+    let transaction = state
+        .db
+        .begin_with_config(
+            Some(IsolationLevel::Serializable),
+            Some(AccessMode::ReadWrite),
+        )
+        .await?;
+    let current = require_super_admin(&session, &transaction).await?;
+    if current.id == id {
+        return Err(AppError::forbidden("不能修改自己的角色"));
+    }
+    let role = validate_admin_role(Some(&body.role))?;
+    let target = admins::Entity::find_by_id(id)
+        .one(&transaction)
+        .await?
+        .ok_or_else(|| AppError::not_found("管理员不存在"))?;
+
+    if target.role == ROLE_SUPER_ADMIN
+        && role != ROLE_SUPER_ADMIN
+        && super_admin_count(&transaction).await? <= 1
+    {
+        return Err(AppError::forbidden("不能降级最后一名超级管理员"));
+    }
+
+    if target.role == role {
+        transaction.commit().await?;
+        return Ok(Json(admin_info(&target, None)));
+    }
+
+    let mut active: admins::ActiveModel = target.into();
+    active.role = Set(role);
+    let updated = active.update(&transaction).await?;
+    transaction.commit().await?;
+    Ok(Json(admin_info(&updated, Some("角色已更新"))))
 }
 
 pub async fn get_settings(
     State(state): State<AppState>,
     session: Session,
 ) -> AppResult<Json<SiteResponse>> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let settings = ensure_site_settings(&state).await?;
     Ok(Json(SiteResponse {
         site_name: settings.site_name,
@@ -335,7 +404,7 @@ pub async fn update_settings(
     session: Session,
     Json(body): Json<UpdateSettingsBody>,
 ) -> AppResult<Json<SiteResponse>> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let settings = ensure_site_settings(&state).await?;
 
     let site_name = normalize_site_name(&body.site_name)?;
@@ -414,7 +483,7 @@ pub async fn get_captcha(
     State(state): State<AppState>,
     session: Session,
 ) -> AppResult<Json<CaptchaSettingsResponse>> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let settings = ensure_site_settings(&state).await?;
     Ok(Json(captcha_settings_response(&settings, None)))
 }
@@ -424,7 +493,7 @@ pub async fn update_captcha(
     session: Session,
     Json(body): Json<UpdateCaptchaBody>,
 ) -> AppResult<Json<CaptchaSettingsResponse>> {
-    let _ = require_admin(&session, &state.db).await?;
+    let _ = require_super_admin(&session, &state.db).await?;
     let settings = ensure_site_settings(&state).await?;
 
     let providers = crate::services::captcha::normalize_provider_list(
