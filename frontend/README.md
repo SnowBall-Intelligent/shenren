@@ -32,5 +32,8 @@ npm run build
 | `/admin/login` | 登录 |
 | `/admin/quotes` | 言论审核 |
 | `/admin/persons` | 神人 CRUD |
-| `/admin/settings` | 站点设置 |
-| `/admin/admins` | 管理员 |
+| `/admin/account` | 当前管理员修改用户名或密码 |
+| `/admin/settings` | 系统设置：基本信息 |
+| `/admin/settings/captcha` | 系统设置：人机验证 |
+| `/admin/api-keys` | 系统设置：API Key |
+| `/admin/admins` | 系统设置：管理员 |

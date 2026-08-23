@@ -1,6 +1,7 @@
 import { apiForm, apiJson } from './client'
 import type {
   Admin,
+  AdminAccountUpdate,
   AdminMe,
   AdminRole,
   BootstrapStatus,
@@ -71,6 +72,9 @@ export const adminApi = {
   logout: () => apiJson<void>('/api/admin/logout', { method: 'POST' }),
 
   me: () => apiJson<AdminMe>('/api/admin/me'),
+
+  updateMe: (body: AdminAccountUpdate) =>
+    apiJson<AdminMe>('/api/admin/me', { method: 'PUT', body }),
 
   // Quotes review
   listQuotes: (
@@ -159,7 +163,7 @@ export const adminApi = {
 
   getCaptcha: () => apiJson<CaptchaSettings>('/api/admin/captcha'),
 
-  updateCaptcha: (body: { providers: CaptchaSettings['providers'] }) =>
+  updateCaptcha: (body: Pick<CaptchaSettings, 'providers' | 'account_update_enabled'>) =>
     apiJson<CaptchaSettings>('/api/admin/captcha', { method: 'PUT', body }),
 
   // Admins

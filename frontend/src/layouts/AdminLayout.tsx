@@ -32,6 +32,7 @@ import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HomeIcon from '@mui/icons-material/Home'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts'
 import { adminApi } from '../api'
 import type { AdminMe } from '../api/types'
 import { ApiError } from '../api/client'
@@ -44,7 +45,6 @@ type NavGroup = {
   id: string
   label: string
   icon: ReactNode
-  match: string
   children: NavLeaf[]
   superOnly?: boolean
 }
@@ -59,27 +59,32 @@ const navItems: NavItem[] = [
     id: 'quotes',
     label: '言论管理',
     icon: <FormatQuoteIcon />,
-    match: '/admin/quotes',
     children: [
       { to: '/admin/quotes/review', label: '言论审核', icon: <RateReviewIcon /> },
       { to: '/admin/quotes/list', label: '言论列表', icon: <ListAltIcon /> },
     ],
   },
   { to: '/admin/persons', label: '神人管理', icon: <PeopleIcon /> },
-  { to: '/admin/api-keys', label: 'API Key', icon: <VpnKeyIcon />, superOnly: true },
+  { to: '/admin/account', label: '账号设置', icon: <ManageAccountsIcon /> },
   {
     id: 'settings',
-    label: '站点设置',
+    label: '系统设置',
     icon: <SettingsIcon />,
-    match: '/admin/settings',
     superOnly: true,
     children: [
       { to: '/admin/settings', label: '基本信息', icon: <InfoOutlinedIcon /> },
       { to: '/admin/settings/captcha', label: '人机验证', icon: <VerifiedUserIcon /> },
+      { to: '/admin/api-keys', label: 'API Key', icon: <VpnKeyIcon /> },
+      { to: '/admin/admins', label: '管理员', icon: <AdminPanelSettingsIcon /> },
     ],
   },
-  { to: '/admin/admins', label: '管理员', icon: <AdminPanelSettingsIcon />, superOnly: true },
 ]
+
+function isGroupActive(group: NavGroup, pathname: string) {
+  return group.children.some(
+    (child) => pathname === child.to || pathname.startsWith(`${child.to}/`),
+  )
+}
 
 function isRestrictedPath(pathname: string) {
   return (
@@ -90,7 +95,7 @@ function isRestrictedPath(pathname: string) {
 }
 
 function activeGroupId(pathname: string): string | null {
-  const group = navItems.find((item) => isNavGroup(item) && pathname.startsWith(item.match))
+  const group = navItems.find((item) => isNavGroup(item) && isGroupActive(item, pathname))
   return group && isNavGroup(group) ? group.id : null
 }
 
@@ -187,7 +192,7 @@ export default function AdminLayout() {
           isNavGroup(item) ? (
             <Box key={item.id}>
               <ListItemButton
-                selected={location.pathname.startsWith(item.match)}
+                selected={isGroupActive(item, location.pathname)}
                 onClick={() => openGroup(item.id)}
               >
                 <ListItemIcon sx={{ minWidth: 40 }}>{item.icon}</ListItemIcon>

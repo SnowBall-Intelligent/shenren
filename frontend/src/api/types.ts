@@ -31,6 +31,7 @@ export interface CaptchaProviderConfig {
 
 export interface CaptchaSettings {
   providers: CaptchaProviderConfig[]
+  account_update_enabled: boolean
   message?: string
 }
 
@@ -121,7 +122,16 @@ export interface AdminMe {
   id: number
   username: string
   role: AdminRole
+  created_at?: string
+  captcha?: PublicCaptcha
   message?: string
+}
+
+export interface AdminAccountUpdate {
+  username: string
+  current_password: string
+  new_password?: string | null
+  captcha?: CaptchaPayload
 }
 
 export interface SiteSettingsUpdate {

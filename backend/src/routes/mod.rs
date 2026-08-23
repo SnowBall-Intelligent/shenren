@@ -199,6 +199,7 @@ fn audit_operation(method: &Method, path: &str) -> Option<AuditOperation> {
         (&Method::POST, ["setup"]) => ("setup", "admins", None),
         (&Method::POST, ["login"]) => ("login", "session", None),
         (&Method::POST, ["logout"]) => ("logout", "session", None),
+        (&Method::PUT, ["me"]) => ("update_account", "admins", None),
         (&Method::POST, ["admins"]) => ("create", "admins", None),
         (&Method::DELETE, ["admins", id]) => ("delete", "admins", Some((*id).to_string())),
         (&Method::PUT, ["admins", id, "role"]) => {
@@ -310,7 +311,7 @@ fn admin_routes(state: AppState) -> Router<AppState> {
         .route("/setup", post(admin::setup))
         .route("/login", post(admin::login))
         .route("/logout", post(admin::logout))
-        .route("/me", get(admin::me))
+        .route("/me", get(admin::me).put(admin::update_me))
         .route(
             "/persons",
             get(admin::list_persons_admin).post(admin::create_person),

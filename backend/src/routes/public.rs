@@ -353,8 +353,7 @@ pub async fn create_submission(
         }
     };
 
-    crate::services::captcha::verify_submission_captcha(&settings, body.captcha.as_ref(), Some(ip))
-        .await?;
+    crate::services::captcha::verify_captcha(&settings, body.captcha.as_ref(), Some(ip)).await?;
 
     if body.place_before_id.is_some() && body.place_after_id.is_some() {
         return Err(AppError::bad_request("只能指定排在某条前面或后面其中之一"));
@@ -419,6 +418,7 @@ pub async fn ensure_site_settings(state: &AppState) -> AppResult<site_settings::
         captcha_site_key: Set(None),
         captcha_secret: Set(None),
         captcha_providers: Set(Some("[]".to_string())),
+        captcha_admin_account_enabled: Set(false),
         ..Default::default()
     };
     Ok(model.insert(&state.db).await?)

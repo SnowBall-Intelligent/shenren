@@ -5,12 +5,14 @@ import {
   Button,
   CircularProgress,
   FormControl,
+  FormControlLabel,
   IconButton,
   InputLabel,
   MenuItem,
   Paper,
   Select,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from '@mui/material'
@@ -19,7 +21,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { adminApi } from '../../api'
-import type { CaptchaProviderConfig, CaptchaVendor } from '../../api/types'
+import type { CaptchaProviderConfig, CaptchaSettings, CaptchaVendor } from '../../api/types'
 import { ApiError } from '../../api/client'
 import { useToast } from '../../components/AppToast'
 
@@ -58,7 +60,7 @@ function emptyRow(provider: CaptchaVendor): CaptchaProviderConfig {
 
 export default function CaptchaSettingsPage() {
   const toast = useToast()
-  const [form, setForm] = useState<CaptchaProviderConfig[] | null>(null)
+  const [form, setForm] = useState<CaptchaSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,7 +68,12 @@ export default function CaptchaSettingsPage() {
   useEffect(() => {
     adminApi
       .getCaptcha()
-      .then((data) => setForm(data.providers ?? []))
+      .then((data) =>
+        setForm({
+          providers: data.providers ?? [],
+          account_update_enabled: data.account_update_enabled ?? false,
+        }),
+      )
       .catch((e) => setError(e instanceof ApiError ? e.message : '加载失败'))
       .finally(() => setLoading(false))
   }, [])
@@ -76,8 +83,14 @@ export default function CaptchaSettingsPage() {
     if (!form) return
     setSaving(true)
     try {
-      const updated = await adminApi.updateCaptcha({ providers: form })
-      setForm(updated.providers ?? [])
+      const updated = await adminApi.updateCaptcha({
+        providers: form.providers,
+        account_update_enabled: form.account_update_enabled,
+      })
+      setForm({
+        providers: updated.providers ?? [],
+        account_update_enabled: updated.account_update_enabled ?? false,
+      })
       toast.fromSuccess(updated)
     } catch (err) {
       toast.fromError(err)
@@ -86,28 +99,51 @@ export default function CaptchaSettingsPage() {
     }
   }
 
-  const unused = VENDORS.filter((v) => !(form ?? []).some((p) => p.provider === v.value))
+  const unused = VENDORS.filter((v) => !form?.providers.some((p) => p.provider === v.value))
 
   const addProvider = (provider: CaptchaVendor) => {
-    setForm((current) => [...(current ?? []), emptyRow(provider)])
+    setForm((current) =>
+      current
+        ? { ...current, providers: [...current.providers, emptyRow(provider)] }
+        : current,
+    )
   }
 
   const updateAt = (index: number, patch: Partial<CaptchaProviderConfig>) => {
-    setForm((current) => (current ?? []).map((item, i) => (i === index ? { ...item, ...patch } : item)))
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            providers: current.providers.map((item, i) =>
+              i === index ? { ...item, ...patch } : item,
+            ),
+          }
+        : current,
+    )
   }
 
   const move = (index: number, dir: -1 | 1) => {
     setForm((current) => {
-      const next = [...(current ?? [])]
+      if (!current) return current
+      const next = [...current.providers]
       const target = index + dir
-      if (target < 0 || target >= next.length) return next
+      if (target < 0 || target >= next.length) return current
       ;[next[index], next[target]] = [next[target], next[index]]
-      return next
+      return { ...current, providers: next }
     })
   }
 
   const removeAt = (index: number) => {
-    setForm((current) => (current ?? []).filter((_, i) => i !== index))
+    setForm((current) => {
+      if (!current) return current
+      const providers = current.providers.filter((_, i) => i !== index)
+      return {
+        ...current,
+        providers,
+        account_update_enabled:
+          providers.length > 0 ? current.account_update_enabled : false,
+      }
+    })
   }
 
   if (loading) {
@@ -126,14 +162,32 @@ export default function CaptchaSettingsPage() {
     <Box component="form" onSubmit={(e) => void save(e)} sx={{ maxWidth: 640 }}>
       <Stack spacing={2.5}>
         <Typography variant="body2" color="text.secondary">
-          仅拦前台投稿。按列表从上到下为优先顺序：先出第一个，加载超时、控件失败或服务端校验失败会自动改用下一个。
+          验证厂商按列表从上到下为优先顺序：先出第一个，加载超时、控件失败或服务端校验失败会自动改用下一个。
         </Typography>
 
-        {form.length === 0 ? (
+        <Stack spacing={0.5}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={form.account_update_enabled}
+                disabled={form.providers.length === 0}
+                onChange={(event) =>
+                  setForm({ ...form, account_update_enabled: event.target.checked })
+                }
+              />
+            }
+            label="修改管理员账号时要求人机验证"
+          />
+          <Typography variant="caption" color="text.secondary">
+            前台投稿在配置厂商后始终启用验证；账号修改可通过此开关独立控制。
+          </Typography>
+        </Stack>
+
+        {form.providers.length === 0 ? (
           <Alert severity="info">未配置任何人机验证时，投稿不校验。</Alert>
         ) : null}
 
-        {form.map((item, index) => {
+        {form.providers.map((item, index) => {
           const labels = helperFor(item.provider)
           const options = VENDORS.filter(
             (v) => v.value === item.provider || unused.some((u) => u.value === v.value),
@@ -156,7 +210,7 @@ export default function CaptchaSettingsPage() {
                   <IconButton
                     size="small"
                     aria-label="下移"
-                    disabled={index === form.length - 1}
+                    disabled={index === form.providers.length - 1}
                     onClick={() => move(index, 1)}
                   >
                     <ArrowDownwardIcon fontSize="small" />

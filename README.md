@@ -241,15 +241,16 @@ curl -H "Authorization: Bearer srk_xxx" \
 | GET | `/api/admin/bootstrap-status` | 是否需要初始化 |
 | POST | `/api/admin/setup` | 无管理员时创建超管并登录 |
 | POST | `/api/admin/login` / `logout` | Cookie Session（HttpOnly + SameSite=Lax） |
-| GET | `/api/admin/me` | 当前管理员 |
+| GET/PUT | `/api/admin/me` | 获取或修改当前管理员的用户名/密码 |
 | CRUD | `/api/admin/persons` | 神人（multipart 头像） |
 | CRUD | `/api/admin/api-keys` | 外部 API Key 与限制配置 |
 | POST | `/api/admin/api-keys/:id/reset-usage` | 重置 Key 的持久化使用量 |
-| GET/PUT | `/api/admin/settings` | 站点配置 |
+| GET/PUT | `/api/admin/settings` | 系统设置中的站点配置 |
+| GET/PUT | `/api/admin/captcha` | 人机验证厂商与账号修改验证开关 |
 | CRUD | `/api/admin/admins` | 管理员（不可删光最后一个；删自己时若仍有他人则允许并注销） |
 | GET | `/api/admin/quotes` | 审核列表 |
 | POST | `/api/admin/quotes/:id/approve` | multipart：新神人需 `avatar`，或 `person_id` 绑定 |
 | POST | `/api/admin/quotes/:id/approve-json` | JSON 绑定已有神人 / 已有 `person_id` 直接通过 |
 | POST | `/api/admin/quotes/:id/reject` | 驳回 |
 
-密码使用 Argon2。
+密码使用 Argon2。修改当前账号时必须提交当前密码；新密码留空表示只修改用户名。超级管理员可在“系统设置 → 人机验证”中开启账号修改验证，开启后超级管理员和普通管理员修改自己的账号都必须额外提交验证码。

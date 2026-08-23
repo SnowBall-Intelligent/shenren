@@ -22,6 +22,11 @@ struct MigratedAdmin {
     role: String,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct MigratedSettings {
+    captcha_admin_account_enabled: bool,
+}
+
 #[tokio::test]
 async fn migrates_legacy_quotes_on_configured_database() {
     let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
@@ -67,6 +72,14 @@ async fn migrates_legacy_quotes_on_configured_database() {
     .await
     .expect("insert legacy admin");
 
+    db.execute(Statement::from_sql_and_values(
+        backend,
+        "INSERT INTO site_settings (site_name, allow_propose_person, captcha_provider) VALUES (?, ?, ?)",
+        vec!["迁移测试站点".into(), false.into(), "none".into()],
+    ))
+    .await
+    .expect("insert legacy settings");
+
     for (content, sort_order) in [(FIRST_CONTENT, 20_i32), (SECOND_CONTENT, 10_i32)] {
         db.execute(Statement::from_sql_and_values(
             backend,
@@ -110,6 +123,10 @@ async fn migrates_legacy_quotes_on_configured_database() {
         .has_column("admins", "role")
         .await
         .expect("inspect admin role column"));
+    assert!(schema
+        .has_column("site_settings", "captcha_admin_account_enabled")
+        .await
+        .expect("inspect account captcha column"));
 
     let admins = MigratedAdmin::find_by_statement(Statement::from_string(
         backend,
@@ -121,6 +138,16 @@ async fn migrates_legacy_quotes_on_configured_database() {
     assert_eq!(admins.len(), 1);
     assert_eq!(admins[0].username, "legacy-admin");
     assert_eq!(admins[0].role, "super_admin");
+
+    let settings = MigratedSettings::find_by_statement(Statement::from_string(
+        backend,
+        "SELECT captcha_admin_account_enabled FROM site_settings ORDER BY id".to_string(),
+    ))
+    .all(&db)
+    .await
+    .expect("load migrated settings");
+    assert_eq!(settings.len(), 1);
+    assert!(!settings[0].captcha_admin_account_enabled);
 
     let rows = MigratedQuote::find_by_statement(Statement::from_string(
         backend,

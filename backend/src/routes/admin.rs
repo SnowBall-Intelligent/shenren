@@ -1,5 +1,7 @@
-use axum::extract::{Extension, Multipart, Path, Query, State};
-use axum::http::StatusCode;
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, Extension, Multipart, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use chrono::{DateTime, FixedOffset, Utc};
 use sea_orm::{
@@ -13,12 +15,14 @@ use crate::entities::{admins, persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
 use crate::logging::AuditContext;
 use crate::routes::public::{
-    ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
+    ensure_site_settings, normalize_quote_content, public_captcha, PersonBrief, PublicCaptcha,
+    SiteResponse,
 };
 use crate::services::auth::{
     admin_count, find_admin_by_username, hash_password, require_admin, require_super_admin,
     super_admin_count, verify_password, ROLE_ADMIN, ROLE_SUPER_ADMIN, SESSION_ADMIN_ID,
 };
+use crate::services::captcha::CaptchaPayload;
 use crate::services::quote_place::{
     move_in_chain, new_quote_id, on_pinned_changed, ordered_approved_quotes, place_quote,
     quote_search_condition, remove_from_chain, reorder_approved,
@@ -71,6 +75,35 @@ fn admin_info(admin: &admins::Model, message: Option<&str>) -> AdminInfo {
     }
 }
 
+#[derive(Serialize)]
+pub struct AdminSelfInfo {
+    pub id: i64,
+    pub username: String,
+    pub role: String,
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captcha: Option<PublicCaptcha>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+fn admin_self_info(
+    admin: &admins::Model,
+    settings: &site_settings::Model,
+    message: Option<&str>,
+) -> AdminSelfInfo {
+    AdminSelfInfo {
+        id: admin.id,
+        username: admin.username.clone(),
+        role: admin.role.clone(),
+        created_at: admin.created_at,
+        captcha: settings
+            .captcha_admin_account_enabled
+            .then(|| public_captcha(settings)),
+        message: message.map(str::to_string),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct CreateAdminBody {
     pub username: String,
@@ -81,6 +114,14 @@ pub struct CreateAdminBody {
 #[derive(Deserialize)]
 pub struct UpdateAdminRoleBody {
     pub role: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateMeBody {
+    pub username: String,
+    pub current_password: String,
+    pub new_password: Option<String>,
+    pub captcha: Option<CaptchaPayload>,
 }
 
 #[derive(Deserialize)]
@@ -161,18 +202,29 @@ pub struct PersonAdminItem {
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
-fn validate_credentials(username: &str, password: &str) -> AppResult<(String, String)> {
+fn validate_admin_username(username: &str) -> AppResult<String> {
     let username = username.trim().to_string();
     if username.is_empty() || username.chars().count() > 64 {
         return Err(AppError::bad_request("用户名无效"));
     }
+    Ok(username)
+}
+
+fn validate_admin_password(password: &str) -> AppResult<String> {
     if password.len() < 6 {
         return Err(AppError::bad_request("密码至少 6 位"));
     }
     if password.len() > 128 {
         return Err(AppError::bad_request("密码过长"));
     }
-    Ok((username, password.to_string()))
+    Ok(password.to_string())
+}
+
+fn validate_credentials(username: &str, password: &str) -> AppResult<(String, String)> {
+    Ok((
+        validate_admin_username(username)?,
+        validate_admin_password(password)?,
+    ))
 }
 
 fn validate_admin_role(role: Option<&str>) -> AppResult<String> {
@@ -261,9 +313,66 @@ pub async fn logout(session: Session) -> AppResult<StatusCode> {
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn me(State(state): State<AppState>, session: Session) -> AppResult<Json<AdminInfo>> {
+pub async fn me(State(state): State<AppState>, session: Session) -> AppResult<Json<AdminSelfInfo>> {
     let admin = require_admin(&session, &state.db).await?;
-    Ok(Json(admin_info(&admin, None)))
+    let settings = ensure_site_settings(&state).await?;
+    Ok(Json(admin_self_info(&admin, &settings, None)))
+}
+
+pub async fn update_me(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    session: Session,
+    Extension(audit): Extension<AuditContext>,
+    Json(body): Json<UpdateMeBody>,
+) -> AppResult<Json<AdminSelfInfo>> {
+    let admin = require_admin(&session, &state.db).await?;
+    let username = validate_admin_username(&body.username)?;
+    let new_password = body
+        .new_password
+        .as_deref()
+        .map(validate_admin_password)
+        .transpose()?;
+
+    if username == admin.username && new_password.is_none() {
+        return Err(AppError::bad_request("用户名或密码至少修改一项"));
+    }
+    if body.current_password.is_empty()
+        || !verify_password(&body.current_password, &admin.password_hash)?
+    {
+        return Err(AppError::bad_request("当前密码错误"));
+    }
+
+    let settings = ensure_site_settings(&state).await?;
+    if settings.captcha_admin_account_enabled {
+        if crate::services::captcha::parse_providers(&settings).is_empty() {
+            return Err(AppError::internal("账号修改人机验证已开启但未配置验证厂商"));
+        }
+        let ip = state.config.client_ip(&headers, addr);
+        crate::services::captcha::verify_captcha(&settings, body.captcha.as_ref(), Some(ip))
+            .await?;
+    }
+
+    if let Some(existing) = find_admin_by_username(&state.db, &username).await? {
+        if existing.id != admin.id {
+            return Err(AppError::conflict("用户名已存在"));
+        }
+    }
+
+    let mut active: admins::ActiveModel = admin.into();
+    active.username = Set(username);
+    if let Some(password) = new_password {
+        active.password_hash = Set(hash_password(&password)?);
+    }
+    let updated = active.update(&state.db).await?;
+    audit.set_resource_id(updated.id);
+
+    Ok(Json(admin_self_info(
+        &updated,
+        &settings,
+        Some("账号已更新"),
+    )))
 }
 
 pub async fn list_admins(
@@ -453,6 +562,7 @@ pub struct CaptchaProviderOut {
 #[derive(Serialize)]
 pub struct CaptchaSettingsResponse {
     pub providers: Vec<CaptchaProviderOut>,
+    pub account_update_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -467,6 +577,8 @@ pub struct CaptchaProviderIn {
 #[derive(Deserialize)]
 pub struct UpdateCaptchaBody {
     pub providers: Vec<CaptchaProviderIn>,
+    #[serde(default)]
+    pub account_update_enabled: bool,
 }
 
 fn captcha_settings_response(
@@ -483,6 +595,7 @@ fn captcha_settings_response(
         .collect();
     CaptchaSettingsResponse {
         providers,
+        account_update_enabled: settings.captcha_admin_account_enabled,
         message: message.map(str::to_string),
     }
 }
@@ -510,6 +623,11 @@ pub async fn update_captcha(
             .map(|item| (item.provider, item.site_key, item.secret))
             .collect(),
     )?;
+    if body.account_update_enabled && providers.is_empty() {
+        return Err(AppError::bad_request(
+            "启用账号修改验证前，请先配置至少一个验证厂商",
+        ));
+    }
     let json = crate::services::captcha::serialize_providers(&providers)?;
     let (legacy_provider, legacy_site_key, legacy_secret) =
         crate::services::captcha::first_as_legacy(&providers);
@@ -519,6 +637,7 @@ pub async fn update_captcha(
     am.captcha_provider = Set(legacy_provider);
     am.captcha_site_key = Set(legacy_site_key);
     am.captcha_secret = Set(legacy_secret);
+    am.captcha_admin_account_enabled = Set(body.account_update_enabled);
     let updated = am.update(&state.db).await?;
     state.cache.invalidate_site();
 

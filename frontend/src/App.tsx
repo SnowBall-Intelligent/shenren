@@ -11,6 +11,7 @@ const SetupPage = lazy(() => import('./pages/admin/SetupPage'))
 const LoginPage = lazy(() => import('./pages/admin/LoginPage'))
 const QuotesPage = lazy(() => import('./pages/admin/QuotesPage'))
 const PersonsPage = lazy(() => import('./pages/admin/PersonsPage'))
+const AccountPage = lazy(() => import('./pages/admin/AccountPage'))
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'))
 const CaptchaSettingsPage = lazy(() => import('./pages/admin/CaptchaSettingsPage'))
 const AdminsPage = lazy(() => import('./pages/admin/AdminsPage'))
@@ -46,6 +47,7 @@ export default function App() {
             <Route path="quotes/list" element={<QuotesPage variant="list" />} />
             <Route path="quotes/new" element={<Navigate to="/admin/quotes/list" replace />} />
             <Route path="persons" element={<PersonsPage />} />
+            <Route path="account" element={<AccountPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/captcha" element={<CaptchaSettingsPage />} />
             <Route path="admins" element={<AdminsPage />} />

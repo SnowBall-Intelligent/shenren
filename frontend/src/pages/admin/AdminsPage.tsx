@@ -33,7 +33,7 @@ const ROLE_LABELS: Record<AdminRole, string> = {
 }
 
 const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
-  super_admin: '拥有全部后台管理权限，包括账号、API Key 与站点设置。',
+  super_admin: '拥有全部后台管理权限，包括账号、API Key 与系统设置。',
   admin: '可完整管理言论和神人，不能访问其他后台模块。',
 }
 

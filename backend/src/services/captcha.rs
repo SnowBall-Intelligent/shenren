@@ -162,7 +162,7 @@ pub fn normalize_provider_list(
     Ok(out)
 }
 
-pub async fn verify_submission_captcha(
+pub async fn verify_captcha(
     settings: &site_settings::Model,
     payload: Option<&CaptchaPayload>,
     remote_ip: Option<std::net::IpAddr>,

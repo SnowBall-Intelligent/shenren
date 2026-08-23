@@ -22,6 +22,7 @@ pub struct Model {
     /// JSON array of `{ provider, site_key, secret }`, ordered by failover priority.
     #[sea_orm(column_type = "Text", nullable)]
     pub captcha_providers: Option<String>,
+    pub captcha_admin_account_enabled: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
