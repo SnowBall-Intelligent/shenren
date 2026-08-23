@@ -84,7 +84,16 @@ impl MigrationTrait for Migration {
         let timestamp_sql = match backend {
             DatabaseBackend::Sqlite => "TEXT",
             DatabaseBackend::MySql => "TIMESTAMP",
-            _ => "TIMESTAMPTZ",
+            _ => {
+                return Err(DbErr::Custom(
+                    "quote uuid migration supports sqlite and mysql only".into(),
+                ))
+            }
+        };
+        let uuid_sql = match backend {
+            DatabaseBackend::MySql => "VARCHAR(36)",
+            DatabaseBackend::Sqlite => "TEXT",
+            _ => unreachable!(),
         };
 
         db.execute_unprepared("PRAGMA foreign_keys = OFF")
@@ -97,7 +106,7 @@ impl MigrationTrait for Migration {
 
         db.execute_unprepared(&format!(
             "CREATE TABLE quotes_new (
-                id TEXT PRIMARY KEY NOT NULL,
+                id {uuid_sql} PRIMARY KEY NOT NULL,
                 person_id BIGINT NULL,
                 proposed_person_name VARCHAR(128) NULL,
                 content TEXT NOT NULL,
@@ -105,8 +114,8 @@ impl MigrationTrait for Migration {
                 status VARCHAR(32) NOT NULL,
                 pinned BOOLEAN NOT NULL DEFAULT 0,
                 published_at {timestamp_sql} NOT NULL,
-                place_before_id TEXT NULL,
-                place_after_id TEXT NULL,
+                place_before_id {uuid_sql} NULL,
+                place_after_id {uuid_sql} NULL,
                 created_at {timestamp_sql} NOT NULL,
                 reviewed_at {timestamp_sql} NULL,
                 reviewed_by BIGINT NULL,
@@ -131,73 +140,65 @@ impl MigrationTrait for Migration {
                 (intent_before, intent_after)
             };
 
-            let sql = match backend {
-                DatabaseBackend::Sqlite => {
-                    format!(
-                        "INSERT INTO quotes_new (id, person_id, proposed_person_name, content, source, \
-                         status, pinned, published_at, place_before_id, place_after_id, created_at, \
-                         reviewed_at, reviewed_by) VALUES (
-                         '{new_id}',
-                         {}, {}, '{}', {}, '{}', {}, '{}', {}, {}, '{}', {}, {})",
-                        opt_i64(row.person_id),
-                        opt_str(row.proposed_person_name.as_deref()),
-                        escape(&row.content),
-                        opt_str(row.source.as_deref()),
-                        escape(&row.status),
-                        if row.pinned { 1 } else { 0 },
-                        escape(&row.published_at.to_rfc3339()),
-                        opt_str(place_before.as_deref()),
-                        opt_str(place_after.as_deref()),
-                        escape(&row.created_at.to_rfc3339()),
-                        opt_ts(row.reviewed_at),
-                        opt_i64(row.reviewed_by),
-                    )
-                }
-                DatabaseBackend::MySql => {
-                    format!(
-                        "INSERT INTO quotes_new (id, person_id, proposed_person_name, content, source, \
-                         status, pinned, published_at, place_before_id, place_after_id, created_at, \
-                         reviewed_at, reviewed_by) VALUES (
-                         '{new_id}',
-                         {}, {}, '{}', {}, '{}', {}, '{}', {}, {}, '{}', {}, {})",
-                        opt_i64(row.person_id),
-                        opt_str(row.proposed_person_name.as_deref()),
-                        escape(&row.content),
-                        opt_str(row.source.as_deref()),
-                        escape(&row.status),
-                        if row.pinned { 1 } else { 0 },
-                        escape(&row.published_at.to_rfc3339()),
-                        opt_str(place_before.as_deref()),
-                        opt_str(place_after.as_deref()),
-                        escape(&row.created_at.to_rfc3339()),
-                        opt_ts(row.reviewed_at),
-                        opt_i64(row.reviewed_by),
-                    )
-                }
-                _ => {
-                    return Err(DbErr::Custom(
-                        "quote uuid migration supports sqlite and mysql only".into(),
-                    ))
-                }
-            };
-            db.execute_unprepared(&sql).await?;
+            db.execute(Statement::from_sql_and_values(
+                backend,
+                "INSERT INTO quotes_new (
+                    id, person_id, proposed_person_name, content, source, status, pinned,
+                    published_at, place_before_id, place_after_id, created_at, reviewed_at,
+                    reviewed_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![
+                    new_id.into(),
+                    row.person_id.into(),
+                    row.proposed_person_name.clone().into(),
+                    row.content.clone().into(),
+                    row.source.clone().into(),
+                    row.status.clone().into(),
+                    row.pinned.into(),
+                    row.published_at.into(),
+                    place_before.into(),
+                    place_after.into(),
+                    row.created_at.into(),
+                    row.reviewed_at.into(),
+                    row.reviewed_by.into(),
+                ],
+            ))
+            .await?;
         }
 
-        if manager.has_index("quotes", "idx_quotes_feed").await? {
-            db.execute_unprepared("DROP INDEX idx_quotes_feed")
-                .await
-                .ok();
+        match backend {
+            DatabaseBackend::MySql => {
+                db.execute_unprepared("RENAME TABLE quotes TO quotes_legacy, quotes_new TO quotes")
+                    .await?;
+            }
+            DatabaseBackend::Sqlite => {
+                db.execute_unprepared("ALTER TABLE quotes RENAME TO quotes_legacy")
+                    .await?;
+                // SQLite keeps the old table name visible until commit; finalize the swap explicitly.
+                db.execute_unprepared("COMMIT").await.ok();
+                db.execute_unprepared("ALTER TABLE quotes_new RENAME TO quotes")
+                    .await?;
+            }
+            _ => unreachable!(),
         }
-        db.execute_unprepared("ALTER TABLE quotes RENAME TO quotes_legacy")
-            .await?;
-        // SQLite keeps the old table name visible until commit; finalize the swap explicitly.
-        db.execute_unprepared("COMMIT").await.ok();
-        db.execute_unprepared("ALTER TABLE quotes_new RENAME TO quotes")
-            .await?;
         db.execute_unprepared("DROP TABLE quotes_legacy").await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_quotes_status_pinned ON quotes (status, pinned)",
+        create_index_if_missing(
+            manager,
+            "idx_quotes_status_created_at",
+            &[Quotes::Status, Quotes::CreatedAt],
+        )
+        .await?;
+        create_index_if_missing(
+            manager,
+            "idx_quotes_status_person_created_at",
+            &[Quotes::Status, Quotes::PersonId, Quotes::CreatedAt],
+        )
+        .await?;
+        create_index_if_missing(
+            manager,
+            "idx_quotes_status_pinned",
+            &[Quotes::Status, Quotes::Pinned],
         )
         .await?;
 
@@ -213,27 +214,27 @@ impl MigrationTrait for Migration {
     }
 }
 
-fn escape(s: &str) -> String {
-    s.replace('\'', "''")
+async fn create_index_if_missing(
+    manager: &SchemaManager<'_>,
+    name: &str,
+    columns: &[Quotes],
+) -> Result<(), DbErr> {
+    if manager.has_index("quotes", name).await? {
+        return Ok(());
+    }
+    let mut index = Index::create();
+    index.name(name).table(Quotes::Table);
+    for column in columns {
+        index.col(*column);
+    }
+    manager.create_index(index.to_owned()).await
 }
 
-fn opt_str(v: Option<&str>) -> String {
-    match v {
-        Some(s) => format!("'{}'", escape(s)),
-        None => "NULL".to_string(),
-    }
-}
-
-fn opt_i64(v: Option<i64>) -> String {
-    match v {
-        Some(n) => n.to_string(),
-        None => "NULL".to_string(),
-    }
-}
-
-fn opt_ts(v: Option<chrono::DateTime<chrono::FixedOffset>>) -> String {
-    match v {
-        Some(t) => format!("'{}'", escape(&t.to_rfc3339())),
-        None => "NULL".to_string(),
-    }
+#[derive(Copy, Clone, DeriveIden)]
+enum Quotes {
+    Table,
+    Status,
+    PersonId,
+    Pinned,
+    CreatedAt,
 }

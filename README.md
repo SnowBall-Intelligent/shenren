@@ -149,7 +149,7 @@ npm --prefix e2e ci
 npm test
 ```
 
-浏览器用例只在 CI 跑（`.github/workflows/test.yml` 会装 Chromium 并执行 `npm run test:ci`）。
+浏览器用例只在 CI 跑（`.github/workflows/test.yml` 会装 Chromium 并执行 `npm run test:ci`）。Test 工作流还会从旧版数字语录 ID 结构开始，分别在 SQLite 与 MySQL 8.4 上插入测试数据并执行完整迁移。
 
 ## CI
 
