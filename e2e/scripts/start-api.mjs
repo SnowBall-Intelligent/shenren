@@ -1,10 +1,15 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, rmSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const runtimeDir = path.join(root, 'e2e/.tmp/runtime')
+const tmpDir = path.resolve(root, 'e2e/.tmp')
+const runtimeDir = path.resolve(tmpDir, 'runtime')
+if (path.dirname(runtimeDir) !== tmpDir) {
+  throw new Error(`refusing to reset unexpected E2E runtime directory: ${runtimeDir}`)
+}
+rmSync(runtimeDir, { recursive: true, force: true })
 mkdirSync(path.join(runtimeDir, 'uploads'), { recursive: true })
 const cargoTargetDir = path.join(root, 'e2e/.tmp/cargo-target')
 const manifestPath = path.join(root, 'backend/Cargo.toml')
