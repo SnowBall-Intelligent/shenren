@@ -65,7 +65,7 @@ test('super admin can manage roles and ordinary admins only see business modules
   await expect(editDialog).toBeHidden()
   await expect(page.getByText('角色已更新')).toBeVisible()
 
-  await page.getByRole('button', { name: '退出' }).click()
+  await page.getByRole('button', { name: '退出', exact: true }).click()
   await page.getByLabel('用户名').fill(username)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: '登录' }).click()
@@ -79,7 +79,7 @@ test('super admin can manage roles and ordinary admins only see business modules
   await page.goto('/admin/admins')
   await expect(page).toHaveURL(/\/admin\/quotes\/review/)
 
-  await page.getByRole('button', { name: '退出' }).click()
+  await page.getByRole('button', { name: '退出', exact: true }).click()
   await page.getByLabel('用户名').fill(ADMIN_USER)
   await page.getByLabel('密码').fill(ADMIN_PASS)
   await page.getByRole('button', { name: '登录' }).click()
