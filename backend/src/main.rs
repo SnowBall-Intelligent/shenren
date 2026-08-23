@@ -2,6 +2,7 @@ mod cache;
 mod config;
 mod entities;
 mod error;
+mod logging;
 mod routes;
 mod services;
 mod state;
@@ -9,31 +10,26 @@ mod state;
 use std::sync::Arc;
 use std::time::Duration;
 
-use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectOptions, ConnectionTrait, Database};
-use tokio::net::TcpListener;
-use tracing_subscriber::EnvFilter;
-
 use crate::cache::PublicReadCache;
 use crate::config::Config;
 use crate::services::api_key::ApiKeyLimiters;
 use crate::services::auth::hash_password;
 use crate::services::rate_limit::RateLimiters;
 use crate::state::AppState;
+use migration::{Migrator, MigratorTrait};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("warn,tower_http=warn,sea_orm=warn")),
-        )
-        .init();
-
     let config = Config::from_env().map_err(|e| {
-        tracing::error!("{e}");
+        eprintln!("configuration error: {e}");
+        e
+    })?;
+    let _log_guards = logging::init(&config).map_err(|e| {
+        eprintln!("logging initialization failed: {e}");
         e
     })?;
     std::fs::create_dir_all(&config.uploads_dir)?;

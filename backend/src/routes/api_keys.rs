@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::Utc;
@@ -8,6 +8,7 @@ use tower_sessions::Session;
 
 use crate::entities::api_keys;
 use crate::error::{AppError, AppResult};
+use crate::logging::AuditContext;
 use crate::services::api_key::{
     encode_string_list, generate_api_key, normalize_domain_rules, normalize_ip_rules,
     parse_string_list,
@@ -141,6 +142,7 @@ pub async fn list(
 pub async fn create(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     Json(body): Json<ApiKeyBody>,
 ) -> AppResult<(StatusCode, Json<ApiKeyItem>)> {
     require_super_admin(&session, &state.db).await?;
@@ -166,6 +168,7 @@ pub async fn create(
     }
     .insert(&state.db)
     .await?;
+    audit.set_resource_id(model.id);
     Ok((StatusCode::CREATED, Json(item(model, Some(raw))?)))
 }
 

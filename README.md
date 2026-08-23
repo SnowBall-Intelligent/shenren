@@ -73,6 +73,9 @@ watchexec -e rs,toml -r cargo run
 | `DATABASE_MAX_CONNECTIONS` | MySQL `32` / SQLite `8` | 连接池上限 |
 | `BIND_ADDR` | `127.0.0.1:3000` | 监听地址。非 loopback 时 Cookie 默认 `Secure` |
 | `UPLOADS_DIR` | `uploads` | 头像目录（相对 backend cwd；不能是 `/` 或盘符根） |
+| `LOG_ENABLED` | `true` | 是否启用控制台、系统文件和管理员审计日志。支持 `true/false`、`1/0`、`yes/no` |
+| `LOG_LEVEL` | `info` | 最低日志等级：`error` / `warn` / `info` / `debug` / `trace` |
+| `LOG_TIMEZONE` | `UTC` | 日志时间及文件名日期使用的 IANA 时区名，例如 `Asia/Hong_Kong` |
 | `COOKIE_SECURE` | 随监听地址 | 显式 `true`/`false` 可覆盖；非 127.0.0.1/`::1` 默认 `true` |
 | `COOKIE_SAMESITE` | `Lax` | `Lax` / `Strict` / `None`（跨站前端用 `None`，且须 HTTPS） |
 | `SESSION_TTL_SECS` | `43200` | 管理端会话空闲过期（秒） |
@@ -85,6 +88,14 @@ watchexec -e rs,toml -r cargo run
 | `RATE_LIMIT_LOGIN` / `_WINDOW` | `5` / `60` | `POST /api/admin/login`、`/setup` |
 | `RATE_LIMIT_ADMIN` / `_WINDOW` | `120` / `60` | 其余 `/api/admin/*` |
 | `RATE_LIMIT_UPLOADS` / `_WINDOW` | `240` / `60` | `GET /uploads/*` |
+
+### 系统日志
+
+日志启用时同时输出到控制台和文件。通用运行及 HTTP 摘要写入 `data/logs/system-YYYY-MM-DD-NNN.log`，登录、退出和后台写操作写入 `data/logs/admin/audit-YYYY-MM-DD-NNN.log`。审计日志不会重复写入系统文件。
+
+每个文件最大 `1 MiB`，达到上限后递增三位分段号；日期按 `LOG_TIMEZONE` 计算。程序启动和跨日首次写入时自动清理 30 天前、且符合上述命名规则的日志。日志初始化失败会阻止启动，运行期写盘失败则降级到 `stderr`。
+
+请求日志只记录方法、不含查询参数的路径、状态、客户端 IP 和耗时。管理员审计日志只记录操作者、动作、目标 ID 和结果，不记录请求体、言论正文、密码、Cookie、Session、Authorization、完整 API Key 或验证码密钥。
 
 ## 前后端一起开发
 
@@ -121,6 +132,7 @@ $env:DATABASE_URL = "mysql://user:pass@host:3306/shenren"
 $env:COOKIE_SECURE = "true"
 $env:COOKIE_SAMESITE = "None"
 $env:CORS_ORIGINS = "https://your.pages.example"
+$env:LOG_TIMEZONE = "Asia/Hong_Kong"
 cargo run --release
 ```
 

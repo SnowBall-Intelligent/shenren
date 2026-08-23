@@ -19,11 +19,16 @@ services:
       DATABASE_URL: ${DATABASE_URL:-mysql://shenren:shenren@host.docker.internal:3306/shenren}
       BIND_ADDR: 0.0.0.0:3000
       UPLOADS_DIR: /data/uploads
+      LOG_ENABLED: ${LOG_ENABLED:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_TIMEZONE: ${LOG_TIMEZONE:-UTC}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
       - shenren_uploads:/data/uploads
+      - shenren_logs:/app/data/logs
     restart: unless-stopped
 
 volumes:
   shenren_uploads:
+  shenren_logs:

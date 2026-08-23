@@ -6,6 +6,7 @@ import { API, WEB } from './helpers/env'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
 const adminAuthFile = path.join(here, '.auth/admin.json')
+const reuseExistingServer = process.env.E2E_REUSE_SERVER === 'true'
 
 export default defineConfig({
   globalSetup: './global-setup.ts',
@@ -22,7 +23,7 @@ export default defineConfig({
       cwd: root,
       url: `${API}/api/site`,
       timeout: 180_000,
-      reuseExistingServer: false,
+      reuseExistingServer,
     },
     ...(process.env.CI
       ? [

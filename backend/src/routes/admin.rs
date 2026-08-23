@@ -1,4 +1,4 @@
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{Extension, Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -11,6 +11,7 @@ use tower_sessions::Session;
 
 use crate::entities::{admins, persons, quotes, site_settings};
 use crate::error::{AppError, AppResult};
+use crate::logging::AuditContext;
 use crate::routes::public::{
     ensure_site_settings, normalize_quote_content, PersonBrief, SiteResponse,
 };
@@ -193,8 +194,10 @@ pub async fn bootstrap_status(State(state): State<AppState>) -> AppResult<Json<B
 pub async fn setup(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     Json(body): Json<SetupBody>,
 ) -> AppResult<(StatusCode, Json<AdminInfo>)> {
+    audit.set_username(&body.username);
     let count = admin_count(&state.db).await?;
     if count > 0 {
         return Err(AppError::forbidden("已完成初始化，无法再次执行 setup"));
@@ -212,6 +215,7 @@ pub async fn setup(
     }
     .insert(&state.db)
     .await?;
+    audit.set_resource_id(admin.id);
 
     // Ensure default site settings exist after first admin.
     let _ = ensure_site_settings(&state).await?;
@@ -228,8 +232,10 @@ pub async fn setup(
 pub async fn login(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     Json(body): Json<LoginBody>,
 ) -> AppResult<Json<AdminInfo>> {
+    audit.set_username(&body.username);
     let username = body.username.trim();
     let admin = find_admin_by_username(&state.db, username).await?;
     let password_ok = match &admin {
@@ -277,6 +283,7 @@ pub async fn list_admins(
 pub async fn create_admin(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     Json(body): Json<CreateAdminBody>,
 ) -> AppResult<(StatusCode, Json<AdminInfo>)> {
     let _ = require_super_admin(&session, &state.db).await?;
@@ -301,6 +308,7 @@ pub async fn create_admin(
     }
     .insert(&state.db)
     .await?;
+    audit.set_resource_id(admin.id);
 
     Ok((
         StatusCode::CREATED,
@@ -592,6 +600,7 @@ async fn insert_person(
 pub async fn create_person(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     multipart: Multipart,
 ) -> AppResult<(StatusCode, Json<PersonAdminItem>)> {
     let _ = require_admin(&session, &state.db).await?;
@@ -604,6 +613,7 @@ pub async fn create_person(
         parsed.avatar_url,
     )
     .await?;
+    audit.set_resource_id(person.id);
 
     Ok((
         StatusCode::CREATED,
@@ -721,6 +731,7 @@ fn placement_from_body(
 pub async fn create_quote(
     State(state): State<AppState>,
     session: Session,
+    Extension(audit): Extension<AuditContext>,
     Json(body): Json<CreateQuoteBody>,
 ) -> AppResult<(StatusCode, Json<AdminQuoteItem>)> {
     let admin = require_admin(&session, &state.db).await?;
@@ -753,6 +764,7 @@ pub async fn create_quote(
     }
     .insert(&state.db)
     .await?;
+    audit.set_resource_id(&quote_id);
     place_quote(
         &state.db,
         &quote_id,

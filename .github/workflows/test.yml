@@ -91,6 +91,10 @@ jobs:
         working-directory: backend
         run: cargo build
 
+      - name: Rust unit tests
+        working-directory: backend
+        run: cargo test --workspace --locked
+
       - name: API + browser e2e
         working-directory: e2e
         env:

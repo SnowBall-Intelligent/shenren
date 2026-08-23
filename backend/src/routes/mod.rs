@@ -4,26 +4,28 @@ pub mod external;
 pub mod public;
 
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use sea_orm::EntityTrait;
 use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tower_http::trace::TraceLayer;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::{Expiry, MemoryStore, Session, SessionManagerLayer};
 
 use crate::config::{origin_from_referer, Config};
+use crate::entities::admins;
 use crate::error::AppError;
-use crate::services::auth::require_super_admin;
+use crate::logging::{emit_audit, AuditContext};
+use crate::services::auth::{require_super_admin, SESSION_ADMIN_ID};
 use crate::services::rate_limit::Bucket;
 use crate::state::AppState;
 
@@ -47,6 +49,10 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
 
     let admin_api = admin_routes(state.clone())
         .layer(middleware::from_fn_with_state(state.clone(), admin_csrf_mw))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            admin_audit_mw,
+        ))
         .layer(session_layer);
 
     let legacy_api = Router::new()
@@ -83,7 +89,10 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
         .layer(middleware::from_fn(uploads_and_security_headers))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit_mw))
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            request_log_mw,
+        ))
         .layer(
             ServiceBuilder::new()
                 .layer(axum::error_handling::HandleErrorLayer::new(
@@ -113,6 +122,166 @@ pub fn app_router(state: AppState, config: &Config) -> Router {
                 .layer(tower::limit::ConcurrencyLimitLayer::new(concurrency)),
         )
         .with_state(state)
+}
+
+async fn request_log_mw(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let method = request.method().clone();
+    let path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or_else(|| request.uri().path())
+        .to_string();
+    let client_ip = state.config.client_ip(request.headers(), addr);
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let status = response.status();
+    let latency_ms = started.elapsed().as_millis() as u64;
+
+    if status.is_server_error() {
+        tracing::error!(
+            target: "shenren::http",
+            %method,
+            %path,
+            status = status.as_u16(),
+            %client_ip,
+            latency_ms,
+            "request completed"
+        );
+    } else if matches!(
+        status,
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
+    ) {
+        tracing::warn!(
+            target: "shenren::http",
+            %method,
+            %path,
+            status = status.as_u16(),
+            %client_ip,
+            latency_ms,
+            "request completed"
+        );
+    } else {
+        tracing::info!(
+            target: "shenren::http",
+            %method,
+            %path,
+            status = status.as_u16(),
+            %client_ip,
+            latency_ms,
+            "request completed"
+        );
+    }
+    response
+}
+
+struct AuditOperation {
+    action: &'static str,
+    resource: &'static str,
+    resource_id: Option<String>,
+}
+
+fn audit_operation(method: &Method, path: &str) -> Option<AuditOperation> {
+    if !matches!(*method, Method::POST | Method::PUT | Method::DELETE) {
+        return None;
+    }
+    let relative = path
+        .strip_prefix("/api/admin/")
+        .or_else(|| path.strip_prefix("/admin/"))
+        .unwrap_or_else(|| path.trim_start_matches('/'));
+    let parts = relative.split('/').collect::<Vec<_>>();
+    let op = match (method, parts.as_slice()) {
+        (&Method::POST, ["setup"]) => ("setup", "admins", None),
+        (&Method::POST, ["login"]) => ("login", "session", None),
+        (&Method::POST, ["logout"]) => ("logout", "session", None),
+        (&Method::POST, ["admins"]) => ("create", "admins", None),
+        (&Method::DELETE, ["admins", id]) => ("delete", "admins", Some((*id).to_string())),
+        (&Method::PUT, ["admins", id, "role"]) => {
+            ("update_role", "admins", Some((*id).to_string()))
+        }
+        (&Method::POST, ["api-keys"]) => ("create", "api_keys", None),
+        (&Method::PUT, ["api-keys", id]) => ("update", "api_keys", Some((*id).to_string())),
+        (&Method::DELETE, ["api-keys", id]) => ("delete", "api_keys", Some((*id).to_string())),
+        (&Method::POST, ["api-keys", id, "reset-usage"]) => {
+            ("reset_usage", "api_keys", Some((*id).to_string()))
+        }
+        (&Method::PUT, ["settings"]) => ("update", "settings", None),
+        (&Method::PUT, ["captcha"]) => ("update", "captcha", None),
+        (&Method::POST, ["persons"]) => ("create", "persons", None),
+        (&Method::PUT, ["persons", id]) => ("update", "persons", Some((*id).to_string())),
+        (&Method::DELETE, ["persons", id]) => ("delete", "persons", Some((*id).to_string())),
+        (&Method::POST, ["quotes"]) => ("create", "quotes", None),
+        (&Method::POST, ["quotes", "reorder"]) => ("reorder", "quotes", None),
+        (&Method::PUT, ["quotes", id]) => ("update", "quotes", Some((*id).to_string())),
+        (&Method::DELETE, ["quotes", id]) => ("delete", "quotes", Some((*id).to_string())),
+        (&Method::POST, ["quotes", id, "move"]) => ("move", "quotes", Some((*id).to_string())),
+        (&Method::POST, ["quotes", id, "approve"])
+        | (&Method::POST, ["quotes", id, "approve-json"]) => {
+            ("approve", "quotes", Some((*id).to_string()))
+        }
+        (&Method::POST, ["quotes", id, "reject"]) => ("reject", "quotes", Some((*id).to_string())),
+        _ => return None,
+    };
+    Some(AuditOperation {
+        action: op.0,
+        resource: op.1,
+        resource_id: op.2,
+    })
+}
+
+async fn session_admin(session: &Session, state: &AppState) -> Option<admins::Model> {
+    let id: i64 = session.get(SESSION_ADMIN_ID).await.ok().flatten()?;
+    admins::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn admin_audit_mw(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    session: Session,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let Some(operation) = audit_operation(request.method(), request.uri().path()) else {
+        return next.run(request).await;
+    };
+    let client_ip = state.config.client_ip(request.headers(), addr);
+    let actor_before = session_admin(&session, &state).await;
+    let context = AuditContext::default();
+    request.extensions_mut().insert(context.clone());
+
+    let response = next.run(request).await;
+    let actor = match actor_before {
+        Some(actor) => Some(actor),
+        None => session_admin(&session, &state).await,
+    };
+    let attempted_username = context.username();
+    let contextual_resource_id = context.resource_id();
+    emit_audit(
+        actor.as_ref().map(|admin| admin.id),
+        actor
+            .as_ref()
+            .map(|admin| admin.username.as_str())
+            .or(attempted_username.as_deref()),
+        actor.as_ref().map(|admin| admin.role.as_str()),
+        operation.action,
+        operation.resource,
+        operation
+            .resource_id
+            .as_deref()
+            .or(contextual_resource_id.as_deref()),
+        response.status(),
+        client_ip,
+    );
+    response
 }
 
 fn admin_routes(state: AppState) -> Router<AppState> {

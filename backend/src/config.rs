@@ -4,6 +4,7 @@ use std::path::{Component, PathBuf};
 use std::time::Duration;
 
 use axum::http::HeaderMap;
+use chrono_tz::Tz;
 use tower_sessions::cookie::SameSite;
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,9 @@ pub struct Config {
     pub database_url: String,
     pub bind_addr: String,
     pub uploads_dir: PathBuf,
+    pub log_enabled: bool,
+    pub log_level: String,
+    pub log_timezone: Tz,
     pub cookie_secure: bool,
     pub cookie_same_site: SameSite,
     pub cors_origins: Vec<String>,
@@ -36,6 +40,9 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("uploads")),
         )?;
+        let log_enabled = parse_bool("LOG_ENABLED", env::var("LOG_ENABLED").ok().as_deref(), true)?;
+        let log_level = parse_log_level(env::var("LOG_LEVEL").ok().as_deref())?;
+        let log_timezone = parse_log_timezone(env::var("LOG_TIMEZONE").ok().as_deref())?;
 
         let loopback = is_loopback_bind(&bind_addr);
         let cookie_secure = match env::var("COOKIE_SECURE") {
@@ -66,6 +73,9 @@ impl Config {
             database_url,
             bind_addr,
             uploads_dir,
+            log_enabled,
+            log_level,
+            log_timezone,
             cookie_secure,
             cookie_same_site,
             cors_origins,
@@ -203,5 +213,59 @@ fn env_bool(name: &str, default: bool) -> bool {
     match env::var(name) {
         Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
         Err(_) => default,
+    }
+}
+
+fn parse_bool(name: &str, raw: Option<&str>, default: bool) -> Result<bool, String> {
+    let Some(raw) = raw else {
+        return Ok(default);
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Ok(true),
+        "0" | "false" | "no" => Ok(false),
+        _ => Err(format!("{name} 必须是 true/false、1/0 或 yes/no")),
+    }
+}
+
+fn parse_log_level(raw: Option<&str>) -> Result<String, String> {
+    let value = raw.unwrap_or("info").trim().to_ascii_lowercase();
+    match value.as_str() {
+        "error" | "warn" | "info" | "debug" | "trace" => Ok(value),
+        _ => Err("LOG_LEVEL 必须是 error、warn、info、debug 或 trace".to_string()),
+    }
+}
+
+fn parse_log_timezone(raw: Option<&str>) -> Result<Tz, String> {
+    let value = raw
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("UTC");
+    value
+        .parse::<Tz>()
+        .map_err(|_| format!("LOG_TIMEZONE 不是有效的 IANA 时区名: {value}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_bool, parse_log_level, parse_log_timezone};
+
+    #[test]
+    fn logging_defaults_are_enabled_info_and_utc() {
+        assert!(parse_bool("LOG_ENABLED", None, true).unwrap());
+        assert_eq!(parse_log_level(None).unwrap(), "info");
+        assert_eq!(parse_log_timezone(None).unwrap().name(), "UTC");
+    }
+
+    #[test]
+    fn logging_values_are_strictly_validated() {
+        assert!(!parse_bool("LOG_ENABLED", Some("NO"), true).unwrap());
+        assert_eq!(parse_log_level(Some("TRACE")).unwrap(), "trace");
+        assert_eq!(
+            parse_log_timezone(Some("Asia/Hong_Kong")).unwrap().name(),
+            "Asia/Hong_Kong"
+        );
+        assert!(parse_bool("LOG_ENABLED", Some("sometimes"), true).is_err());
+        assert!(parse_log_level(Some("verbose")).is_err());
+        assert!(parse_log_timezone(Some("HongKong-ish")).is_err());
     }
 }

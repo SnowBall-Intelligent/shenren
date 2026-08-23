@@ -3,6 +3,7 @@ import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/ma
 import { publicApi } from '../api'
 import type { Quote } from '../api/types'
 import QuoteBubble from './QuoteBubble'
+import QuoteTimeline from './QuoteTimeline'
 import { ApiError } from '../api/client'
 
 const PAGE_SIZE = 20
@@ -15,7 +16,9 @@ export default function QuoteFeed() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const quoteRefs = useRef<Array<HTMLDivElement | null>>([])
   const inFlight = useRef(false)
+  const [activeIndex, setActiveIndex] = useState(0)
 
   const loadPage = useCallback(async (nextPage: number, append: boolean) => {
     if (inFlight.current) return
@@ -59,6 +62,46 @@ export default function QuoteFeed() {
     return () => io.disconnect()
   }, [hasMore, loading, loadPage, page])
 
+  useEffect(() => {
+    let frame = 0
+    const updateActive = () => {
+      frame = 0
+      const headerOffset = window.innerWidth < 600 ? 72 : 80
+      let bestIndex = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      quoteRefs.current.slice(0, quotes.length).forEach((node, index) => {
+        if (!node) return
+        const rect = node.getBoundingClientRect()
+        if (rect.bottom < headerOffset || rect.top > window.innerHeight) return
+        const distance = Math.abs(rect.top - headerOffset)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          bestIndex = index
+        }
+      })
+      if (bestDistance !== Number.POSITIVE_INFINITY) setActiveIndex(bestIndex)
+    }
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(updateActive)
+    }
+    updateActive()
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [quotes.length])
+
+  const locateQuote = useCallback((index: number) => {
+    const node = quoteRefs.current[index]
+    if (!node) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' })
+    setActiveIndex(index)
+  }, [])
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -91,31 +134,48 @@ export default function QuoteFeed() {
   }
 
   return (
-    <Stack spacing={0}>
-      {quotes.map((quote, index) => {
-        const prev = index > 0 ? quotes[index - 1] : null
-        const quotePersonId = quote.person?.id ?? quote.person_id ?? null
-        const prevPersonId = prev ? (prev.person?.id ?? prev.person_id ?? null) : null
-        const samePerson =
-          prev != null && quotePersonId != null && quotePersonId === prevPersonId
-        return (
-          <QuoteBubble
-            key={quote.id}
-            quote={quote}
-            showIdentity={!samePerson}
-            tightGap={samePerson}
-          />
-        )
-      })}
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '24px minmax(0, 1fr)', sm: '32px minmax(0, 1fr)' },
+        columnGap: { xs: 0.5, sm: 1 },
+        alignItems: 'start',
+      }}
+    >
+      <QuoteTimeline quotes={quotes} activeIndex={activeIndex} onLocate={locateQuote} />
+      <Stack spacing={0} sx={{ minWidth: 0 }}>
+        {quotes.map((quote, index) => {
+          const prev = index > 0 ? quotes[index - 1] : null
+          const quotePersonId = quote.person?.id ?? quote.person_id ?? null
+          const prevPersonId = prev ? (prev.person?.id ?? prev.person_id ?? null) : null
+          const samePerson = prev != null && quotePersonId != null && quotePersonId === prevPersonId
+          return (
+            <Box
+              key={quote.id}
+              ref={(node: HTMLDivElement | null) => {
+                quoteRefs.current[index] = node
+              }}
+              data-testid={`quote-item-${index + 1}`}
+            >
+              <QuoteBubble
+                quote={quote}
+                sequence={index + 1}
+                showIdentity={!samePerson}
+                tightGap={samePerson}
+              />
+            </Box>
+          )
+        })}
 
-      <Box ref={sentinelRef} sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-        {loadingMore ? <CircularProgress size={22} /> : null}
-        {!hasMore && !loadingMore ? (
-          <Typography variant="caption" color="text.secondary">
-            没有更多了
-          </Typography>
-        ) : null}
-      </Box>
-    </Stack>
+        <Box ref={sentinelRef} sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+          {loadingMore ? <CircularProgress size={22} /> : null}
+          {!hasMore && !loadingMore ? (
+            <Typography variant="caption" color="text.secondary">
+              没有更多了
+            </Typography>
+          ) : null}
+        </Box>
+      </Stack>
+    </Box>
   )
 }

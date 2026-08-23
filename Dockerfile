@@ -11,7 +11,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app --create-home shenren \
-    && mkdir -p /data/uploads \
+    && mkdir -p /data/uploads /app/data/logs/admin \
     && chown -R shenren:shenren /app /data
 
 WORKDIR /app
@@ -23,7 +23,7 @@ ENV BIND_ADDR=0.0.0.0:3000 \
     DATABASE_URL=mysql://shenren:shenren@host.docker.internal:3306/shenren
 
 EXPOSE 3000
-VOLUME ["/data/uploads"]
+VOLUME ["/data/uploads", "/app/data/logs"]
 USER shenren
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:3000/api/site" || exit 1

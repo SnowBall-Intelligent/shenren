@@ -3,6 +3,7 @@ backend/target/
 backend/data/
 backend/uploads/*
 !backend/uploads/.gitkeep
+/data/
 
 # Node / frontend
 frontend/node_modules/

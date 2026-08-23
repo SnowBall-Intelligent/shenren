@@ -2,15 +2,17 @@ import { Avatar, Box, Typography } from '@mui/material'
 import type { Quote } from '../api/types'
 import { nameInitial, uploadUrl } from '../api/client'
 import { AVATAR_COL } from '../theme'
+import { formatQuotePublishedAt } from '../utils/quoteTime'
 import QuoteMarkdown from './QuoteMarkdown'
 
 interface QuoteBubbleProps {
   quote: Quote
+  sequence: number
   showIdentity: boolean
   tightGap: boolean
 }
 
-export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubbleProps) {
+export default function QuoteBubble({ quote, sequence, showIdentity, tightGap }: QuoteBubbleProps) {
   const name = quote.person?.name ?? quote.proposed_person_name ?? '未知神人'
   const avatar = uploadUrl(quote.person?.avatar_url)
 
@@ -66,6 +68,13 @@ export default function QuoteBubble({ quote, showIdentity, tightGap }: QuoteBubb
             </Typography>
           ) : null}
         </Box>
+        <Typography
+          variant="caption"
+          data-testid="quote-meta"
+          sx={{ color: 'text.secondary', display: 'block', mt: 0.5, pl: 0.25 }}
+        >
+          #{sequence} · {formatQuotePublishedAt(quote)}
+        </Typography>
       </Box>
     </Box>
   )
