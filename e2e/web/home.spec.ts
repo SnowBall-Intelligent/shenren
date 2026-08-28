@@ -50,7 +50,7 @@ test('homepage timeline shows local publication metadata and appends paginated m
     data: { person_id: personId, content, published_at: publishedAt },
   })
   expect(featured.status(), await featured.text()).toBe(201)
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 25; index += 1) {
     await createApprovedQuote(request, personId, unique(`分页时间轴-${index}`))
   }
   const publicList = await request.get('/api/quotes?page=1&page_size=20')
@@ -63,6 +63,16 @@ test('homepage timeline shows local publication metadata and appends paginated m
   await expect(items).toHaveCount(Math.min(total, 20))
   await expect(markers).toHaveCount(Math.min(total, 20))
   await expect(markers.first()).toHaveAttribute('aria-current', 'step')
+
+  const widths = await page.evaluate(() => {
+    const markerWidth = (sequence: number) => {
+      const marker = document.querySelector(`[data-testid="timeline-marker-${sequence}"]`)
+      return marker ? Number.parseFloat(getComputedStyle(marker, '::before').width) : 0
+    }
+    return [markerWidth(1), markerWidth(2), markerWidth(6)]
+  })
+  expect(widths[0]).toBeGreaterThan(widths[1])
+  expect(widths[1]).toBeGreaterThan(widths[2])
 
   const quoteItem = items.filter({ hasText: content })
   await expect(quoteItem).toHaveCount(1)
@@ -84,7 +94,8 @@ test('homepage timeline shows local publication metadata and appends paginated m
     )
     return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
   }, publishedAt)
-  await expect(quoteItem.getByTestId('quote-meta')).toHaveText(`#${sequence} · ${expectedTime}`)
+  await expect(quoteItem.getByTestId('quote-meta')).toHaveText(`#${sequence}`)
+  await expect(quoteItem.getByTestId('quote-meta')).not.toContainText(expectedTime)
 
   const marker = page.getByTestId(`timeline-marker-${sequence}`)
   await marker.hover()
@@ -95,7 +106,13 @@ test('homepage timeline shows local publication metadata and appends paginated m
     .toBeLessThan(500)
 
   await items.last().scrollIntoViewIfNeeded()
-  await expect.poll(() => markers.count()).toBeGreaterThan(20)
+  await expect.poll(() => markers.count()).toBeGreaterThan(25)
+  const timelineMetrics = await page.getByTestId('quote-timeline').evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+  expect(timelineMetrics.clientHeight).toBeLessThanOrEqual(250)
+  expect(timelineMetrics.scrollHeight).toBeGreaterThan(timelineMetrics.clientHeight)
 })
 
 test('mobile timeline opens a summary before locating a quote', async ({ page }) => {
@@ -111,6 +128,23 @@ test('mobile timeline opens a summary before locating a quote', async ({ page })
   const locateButton = page.getByRole('button', { name: '定位', exact: true })
   await expect(locateButton).toBeVisible()
   await expect(preview).toContainText(/^#1 · /)
+  await expect(preview).toHaveCSS('position', 'fixed')
+  const previewBox = await preview.boundingBox()
+  expect(previewBox).not.toBeNull()
+  expect(Math.abs((previewBox?.x ?? 0) + (previewBox?.width ?? 0) / 2 - 195)).toBeLessThan(2)
+  expect(Math.abs((previewBox?.y ?? 0) + (previewBox?.height ?? 0) / 2 - 422)).toBeLessThan(2)
+
+  await page.getByTestId(/^quote-item-/).last().scrollIntoViewIfNeeded()
+  const markers = page.getByTestId(/^timeline-marker-/)
+  await expect.poll(() => markers.count()).toBeGreaterThan(25)
+  await timeline.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await timeline.hover()
+  await page.mouse.wheel(0, 180)
+  await expect.poll(() => timeline.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  await expect(preview).not.toContainText(/^#1 · /)
+
   await locateButton.click()
   await expect(preview).not.toBeVisible()
 

@@ -98,7 +98,12 @@ export default function QuoteFeed() {
     const node = quoteRefs.current[index]
     if (!node) return
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' })
+    const rect = node.getBoundingClientRect()
+    const targetTop = window.scrollY + rect.top - (window.innerHeight - rect.height) / 2
+    window.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    })
     setActiveIndex(index)
   }, [])
 

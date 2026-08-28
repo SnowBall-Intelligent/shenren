@@ -2,7 +2,6 @@ import { Avatar, Box, Typography } from '@mui/material'
 import type { Quote } from '../api/types'
 import { nameInitial, uploadUrl } from '../api/client'
 import { AVATAR_COL } from '../theme'
-import { formatQuotePublishedAt } from '../utils/quoteTime'
 import QuoteMarkdown from './QuoteMarkdown'
 
 interface QuoteBubbleProps {
@@ -73,7 +72,7 @@ export default function QuoteBubble({ quote, sequence, showIdentity, tightGap }:
           data-testid="quote-meta"
           sx={{ color: 'text.secondary', display: 'block', mt: 0.5, pl: 0.25 }}
         >
-          #{sequence} · {formatQuotePublishedAt(quote)}
+          #{sequence}
         </Typography>
       </Box>
     </Box>

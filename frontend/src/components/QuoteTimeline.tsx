@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import MyLocationIcon from '@mui/icons-material/MyLocation'
+import CloseIcon from '@mui/icons-material/Close'
 import {
   Box,
   Button,
-  Popover,
+  IconButton,
+  Paper,
   Stack,
   Tooltip,
   Typography,
@@ -17,6 +19,14 @@ interface QuoteTimelineProps {
   quotes: Quote[]
   activeIndex: number
   onLocate: (index: number) => void
+}
+
+const MARKER_SLOT_HEIGHT = 10
+const MAX_VISIBLE_MARKERS = 25
+
+function markerWidth(distance: number, mobile: boolean) {
+  const widths = mobile ? [19, 16, 13, 10, 8] : [26, 21, 17, 14, 12]
+  return widths[Math.min(distance, widths.length - 1)] ?? widths[widths.length - 1]
 }
 
 function personName(quote: Quote) {
@@ -44,31 +54,69 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
   const mobile = useMediaQuery(theme.breakpoints.down('sm'))
   const railRef = useRef<HTMLDivElement | null>(null)
   const markerRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const [previewAnchor, setPreviewAnchor] = useState<HTMLElement | null>(null)
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const railInteractionRef = useRef(false)
+  const interactionTimerRef = useRef<number | null>(null)
+  const scrollFrameRef = useRef(0)
 
   useEffect(() => {
     const rail = railRef.current
     const marker = markerRefs.current[activeIndex]
     if (!rail || !marker) return
-    const markerTop = marker.offsetTop
-    const markerBottom = markerTop + marker.offsetHeight
-    if (markerTop < rail.scrollTop) rail.scrollTop = markerTop
-    else if (markerBottom > rail.scrollTop + rail.clientHeight) {
-      rail.scrollTop = markerBottom - rail.clientHeight
-    }
+    const centered = marker.offsetTop + marker.offsetHeight / 2 - rail.clientHeight / 2
+    rail.scrollTop = Math.max(0, centered)
   }, [activeIndex])
 
   useEffect(() => {
     if (!mobile) {
-      setPreviewAnchor(null)
       setPreviewIndex(null)
     }
   }, [mobile])
 
-  const handleMarker = (event: React.MouseEvent<HTMLElement>, index: number) => {
+  useEffect(
+    () => () => {
+      if (interactionTimerRef.current != null) window.clearTimeout(interactionTimerRef.current)
+      if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current)
+    },
+    [],
+  )
+
+  const markRailInteraction = () => {
+    railInteractionRef.current = true
+    if (interactionTimerRef.current != null) window.clearTimeout(interactionTimerRef.current)
+    interactionTimerRef.current = window.setTimeout(() => {
+      railInteractionRef.current = false
+    }, 180)
+  }
+
+  const selectCenteredMarker = () => {
+    const rail = railRef.current
+    if (!mobile || !rail || !railInteractionRef.current) return
+    const center = rail.scrollTop + rail.clientHeight / 2
+    let closestIndex = 0
+    let closestDistance = Number.POSITIVE_INFINITY
+    markerRefs.current.slice(0, quotes.length).forEach((marker, index) => {
+      if (!marker) return
+      const distance = Math.abs(marker.offsetTop + marker.offsetHeight / 2 - center)
+      if (distance < closestDistance) {
+        closestDistance = distance
+        closestIndex = index
+      }
+    })
+    setPreviewIndex(closestIndex)
+    markRailInteraction()
+  }
+
+  const handleRailScroll = () => {
+    if (!mobile || !railInteractionRef.current || scrollFrameRef.current) return
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = 0
+      selectCenteredMarker()
+    })
+  }
+
+  const handleMarker = (index: number) => {
     if (mobile) {
-      setPreviewAnchor(event.currentTarget)
       setPreviewIndex(index)
     } else {
       onLocate(index)
@@ -76,7 +124,6 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
   }
 
   const closePreview = () => {
-    setPreviewAnchor(null)
     setPreviewIndex(null)
   }
 
@@ -84,6 +131,8 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
     if (previewIndex != null) onLocate(previewIndex)
     closePreview()
   }
+
+  const focusIndex = mobile && previewIndex != null ? previewIndex : activeIndex
 
   return (
     <>
@@ -97,17 +146,24 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
           top: { xs: 72, sm: 80 },
           alignSelf: 'start',
           width: '100%',
-          maxHeight: { xs: 'calc(100vh - 96px)', sm: 'calc(100vh - 112px)' },
+          maxHeight: `min(${MARKER_SLOT_HEIGHT * MAX_VISIBLE_MARKERS}px, calc(100vh - 96px))`,
           overflowY: 'auto',
           overflowX: 'hidden',
-          py: 0.75,
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
           scrollbarWidth: 'none',
           '&::-webkit-scrollbar': { display: 'none' },
         }}
+        onWheel={markRailInteraction}
+        onPointerDown={markRailInteraction}
+        onKeyDown={markRailInteraction}
+        onScroll={handleRailScroll}
       >
-        <Stack spacing={0.25} sx={{ alignItems: 'flex-start' }}>
+        <Stack spacing={0} sx={{ alignItems: 'flex-start' }}>
           {quotes.map((quote, index) => {
             const active = index === activeIndex
+            const selected = index === focusIndex
+            const distance = Math.abs(index - focusIndex)
             const label = `定位到第 ${index + 1} 条言论：${personName(quote)}，${formatQuotePublishedAt(quote)}`
             const marker = (
               <Box
@@ -119,14 +175,15 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
                 type="button"
                 aria-label={label}
                 aria-current={active ? 'step' : undefined}
+                data-selected={selected ? 'true' : undefined}
                 data-testid={`timeline-marker-${index + 1}`}
-                onClick={(event: React.MouseEvent<HTMLElement>) => handleMarker(event, index)}
+                onClick={() => handleMarker(index)}
                 sx={{
                   appearance: 'none',
                   border: 0,
                   bgcolor: 'transparent',
                   width: '100%',
-                  height: 9,
+                  height: MARKER_SLOT_HEIGHT,
                   p: 0,
                   display: 'flex',
                   alignItems: 'center',
@@ -135,15 +192,15 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
                   '&::before': {
                     content: '""',
                     display: 'block',
-                    height: active ? 3 : 2,
-                    width: active ? { xs: 18, sm: 24 } : { xs: 8, sm: 12 },
+                    height: selected ? 3 : 2,
+                    width: markerWidth(distance, mobile),
                     borderRadius: 1,
-                    bgcolor: active ? 'primary.main' : 'text.disabled',
+                    bgcolor: selected ? 'primary.main' : 'text.disabled',
                     transition: theme.transitions.create(['width', 'background-color']),
                   },
                   '&:hover::before, &:focus-visible::before': {
-                    width: { xs: 18, sm: 24 },
-                    bgcolor: active ? 'primary.main' : 'text.secondary',
+                    width: { xs: 19, sm: 26 },
+                    bgcolor: selected ? 'primary.main' : 'text.secondary',
                   },
                   '&:focus-visible': {
                     outline: '2px solid',
@@ -173,33 +230,40 @@ export default function QuoteTimeline({ quotes, activeIndex, onLocate }: QuoteTi
         </Stack>
       </Box>
 
-      <Popover
-        open={mobile && previewAnchor != null && previewIndex != null}
-        anchorEl={previewAnchor}
-        onClose={closePreview}
-        anchorOrigin={{ vertical: 'center', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'center', horizontal: 'left' }}
-        slotProps={{
-          paper: {
-            sx: {
-              ml: 1,
-              width: 'min(300px, calc(100vw - 56px))',
-              maxHeight: 'min(320px, calc(100vh - 32px))',
-              p: 1.5,
-              borderRadius: 2,
-            },
-          },
-        }}
-      >
-        {previewIndex != null ? (
-          <Stack spacing={1.25} data-testid="timeline-mobile-preview">
-            <TimelinePreview quote={quotes[previewIndex]} index={previewIndex} />
-            <Button size="small" variant="contained" startIcon={<MyLocationIcon />} onClick={locatePreview}>
+      {mobile && previewIndex != null ? (
+        <Paper
+          elevation={10}
+          data-testid="timeline-mobile-preview"
+          role="dialog"
+          aria-label={`第 ${previewIndex + 1} 条言论预览`}
+          sx={{
+            position: 'fixed',
+            left: '50%',
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: theme.zIndex.modal,
+            width: 'min(320px, calc(100vw - 64px))',
+            maxHeight: 'min(360px, calc(100vh - 96px))',
+            overflowY: 'auto',
+            p: 1.5,
+            borderRadius: 2,
+          }}
+        >
+          <Stack spacing={1.25}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <TimelinePreview quote={quotes[previewIndex]} index={previewIndex} />
+              </Box>
+              <IconButton size="small" aria-label="关闭言论预览" onClick={closePreview}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </Box>
+            <Button variant="contained" startIcon={<MyLocationIcon />} onClick={locatePreview}>
               定位
             </Button>
           </Stack>
-        ) : null}
-      </Popover>
+        </Paper>
+      ) : null}
     </>
   )
 }
